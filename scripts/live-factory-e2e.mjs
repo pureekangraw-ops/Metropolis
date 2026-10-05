@@ -4,7 +4,10 @@ import { createConnectionEngine } from '../src/rail-network.mjs';
 import { createFactoryRailAdapter } from '../src/stations/factory.mjs';
 
 const baseUrl = process.env.FACTORY_RUNTIME_URL || 'https://factory-district.pureekangraw.workers.dev';
-const workId = process.env.LIVE_E2E_WORK_ID || `LIVE-METRO-FACTORY-${Date.now()}`;
+const workId = process.env.LIVE_E2E_WORK_ID;
+const checkpointId = process.env.LIVE_E2E_CHECKPOINT_ID;
+const expectedSourceSha = process.env.FACTORY_SOURCE_SHA;
+if (!workId || !checkpointId || !expectedSourceSha) throw new Error('LIVE_E2E_WORK_ID, LIVE_E2E_CHECKPOINT_ID and FACTORY_SOURCE_SHA are required; reuse existing Work identity');
 const station = createStation({ stationId: 'FACTORY_STATION', railId: 'RAIL_FACTORY', ownerSystem: 'FACTORY', credentialRef: 'credential://factory/live' });
 const rail = createRail({ stationId: station.stationId, railId: station.railId, ownerSystem: station.ownerSystem });
 const adapter = createFactoryRailAdapter({ baseUrl });
@@ -22,7 +25,8 @@ const result = await engine.travel({
   operation: 'FACTORY_HANDOFF',
   payload: {
     workId,
-    checkpointId: 'LIVE-E2E-CP-01',
+    checkpointId,
+    expectedSourceSha,
     source: { stationId: 'METROPOLIS-STATION', system: 'METROPOLIS' },
     target: { stationId: 'FACTORY-STATION', system: 'FACTORY', component: 'FACTORY_HALL' },
     ownerDomain: 'CODE',
@@ -34,6 +38,8 @@ const result = await engine.travel({
 
 const evidence = {
   workId,
+  checkpointId,
+  expectedSourceSha,
   stationStatus: stationSnapshot.status,
   stationIdentity: stationSnapshot.identity,
   outcome: result.outcome,

@@ -30,10 +30,15 @@ export function createFactoryRailAdapter({ baseUrl, fetchImpl = fetch, now = () 
     return { accepted: true, receiptId, providerRef: `${origin}/station/readback/${encodeURIComponent(receiptId)}`, response: body, acceptedAt: now() };
   }
 
-  async function readback({ receipt }) {
+  async function readback({ receipt, transport }) {
     const response = await fetchImpl(`${origin}/station/readback/${encodeURIComponent(receipt.receiptId)}`);
     const body = await response.json().catch(() => ({}));
-    const verified = response.ok && body.receiptId === receipt.receiptId && body.boundaryVerified === true && Boolean(body.evidenceRef);
+    const payload = transport?.payload;
+    const correlated = payload?.workId && payload?.checkpointId
+      && body.workId === payload.workId && body.checkpointId === payload.checkpointId
+      && body.stationId === 'FACTORY-STATION'
+      && Boolean(payload.expectedSourceSha) && body.sourceSha === payload.expectedSourceSha;
+    const verified = Boolean(response.ok && body.receiptId === receipt.receiptId && body.boundaryVerified === true && body.evidenceRef && correlated);
     return { ...body, verified, evidenceRef: verified ? body.evidenceRef : null, observedAt: body.observedAt || now() };
   }
 
