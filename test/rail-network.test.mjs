@@ -36,11 +36,11 @@ test('Connection Engine runs REQUEST to READBACK and returns evidence', async ()
   assert.deepEqual(result.trace.map((item) => item.state).filter(Boolean), ['REQUEST', 'ACCEPTED', 'DISPATCHED', 'RECEIPT', 'READBACK']);
 });
 
-test('Authority is checked before dispatch', async () => {
+test('Unverified Rail capability stops travel before dispatch', async () => {
   let dispatched = false;
   const adapter = readyAdapter();
   adapter.dispatch = async () => { dispatched = true; return { accepted: true }; };
-  const engine = createConnectionEngine({ authorizer: createAuthorityGate([]) });
+  const engine = createConnectionEngine({ authorizer: createAuthorityGate([{ actor: 'LIGHT', stationId: 'STATION-GITHUB', operation: 'CREATE_BRANCH', workId: 'WORK-2' }]) });
   const { station, rail } = pair({ stationId: 'STATION-GITHUB', railId: 'RAIL-GITHUB', ownerSystem: 'GITHUB', adapter });
   engine.registerStation({ station, rail, adapter });
   const result = await engine.travel({ actor: 'LIGHT', workId: 'WORK-2', stationId: station.stationId, operation: 'CREATE_BRANCH' });
@@ -77,7 +77,7 @@ test('Receipt without verified readback is UNKNOWN, not success', async () => {
 test('Station failure is isolated from another ready Station', async () => {
   const engine = createConnectionEngine({ authorizer: createAuthorityGate([
     { actor: 'GO', stationId: 'STATION-GITHUB', operation: 'READ_REPOSITORY' },
-    { actor: 'GO', stationId: 'STATION-NOTION', operation: 'READ_PAGE' },
+    { actor: 'GO', stationId: 'STATION-NOTION', operation: 'READ_REPOSITORY' },
   ]) });
   const github = pair({ stationId: 'STATION-GITHUB', railId: 'RAIL-GITHUB', ownerSystem: 'GITHUB', adapter: { async probe() { return { status: STATION_STATUS.UNAVAILABLE }; }, async dispatch() { throw new Error('must not dispatch'); }, async readback() { throw new Error('must not readback'); } } });
   const notion = pair({ stationId: 'STATION-NOTION', railId: 'RAIL-NOTION', ownerSystem: 'NOTION', adapter: readyAdapter() });

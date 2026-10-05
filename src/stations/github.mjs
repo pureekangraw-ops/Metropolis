@@ -30,7 +30,7 @@ function statusFromResponse(response) {
   return 'UNKNOWN';
 }
 
-function writeCapability(repository, token) {
+function writeCapabilityFor(repository, token) {
   if (!token) return { status: 'UNKNOWN', reason: 'WRITE_CREDENTIAL_UNAVAILABLE' };
   if (typeof repository?.permissions?.push !== 'boolean') return { status: 'UNKNOWN', reason: 'WRITE_PERMISSION_UNVERIFIED' };
   return repository.permissions.push
@@ -92,12 +92,4 @@ export function createGitHubRailAdapter({ owner, repo, token = '', fetchImpl = f
   }
 
   return Object.freeze({ probe, dispatch, readback });
-}
-
-function writeCapabilityFor(repository, token) {
-  if (!token) return { status: 'UNKNOWN', reason: 'WRITE_CREDENTIAL_UNAVAILABLE' };
-  if (typeof repository?.permissions?.push !== 'boolean') return { status: 'UNKNOWN', reason: 'WRITE_PERMISSION_UNVERIFIED' };
-  return repository.permissions.push
-    ? { status: 'READY', reason: 'WRITE_PERMISSION_CONFIRMED' }
-    : { status: 'DENIED', reason: 'WRITE_PERMISSION_DENIED' };
 }
