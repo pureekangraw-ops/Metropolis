@@ -22,10 +22,10 @@ const nodes = [
   { id: 'THE_TAILOR', kind: NODE_KIND.BUILDING, parent: 'METROPOLIS' },
   { id: 'HALL', kind: NODE_KIND.BUILDING, parent: 'METROPOLIS' },
   { id: 'HERMES', kind: NODE_KIND.WORK_SYSTEM, parent: 'HALL' },
-  { id: 'HERMES_SECRETARY', kind: NODE_KIND.AGENT_RUNTIME, parent: 'HERMES', attachedTo: 'HERMES' },
+  { id: 'HERMES_SECRETARY', kind: NODE_KIND.SECRETARY, parent: 'HERMES', attachedTo: 'HERMES' },
   { id: 'WORK_SYSTEM', kind: NODE_KIND.WORK_SYSTEM, parent: 'HALL' },
   { id: 'MIMIR', kind: NODE_KIND.WORK_SYSTEM, parent: 'HALL' },
-  { id: 'MIMIR_SECRETARY', kind: NODE_KIND.AGENT_RUNTIME, parent: 'MIMIR', attachedTo: 'MIMIR' },
+  { id: 'MIMIR_SECRETARY', kind: NODE_KIND.SECRETARY, parent: 'MIMIR', attachedTo: 'MIMIR' },
   { id: 'PIXIE_SERVICE', kind: NODE_KIND.BUILDING, parent: 'METROPOLIS' },
   { id: 'POST_OFFICE', kind: NODE_KIND.CARGO_SURFACE, parent: 'METROPOLIS' },
   { id: 'RAIL', kind: NODE_KIND.TRANSPORT, parent: 'METROPOLIS' },
@@ -98,6 +98,9 @@ export function validateSystemMapV1(map = SYSTEM_MAP_V1) {
   const nodeById = new Map((map.nodes || []).map((node) => [String(node.id).toUpperCase(), node]));
   for (const secretary of ['HERMES_SECRETARY', 'MIMIR_SECRETARY']) {
     const node = nodeById.get(secretary);
+    if (node && String(node.kind || '').toUpperCase() !== NODE_KIND.SECRETARY) {
+      errors.push(mapError('SECRETARY_RUNTIME_IDENTITY', `${secretary} must use SECRETARY kind.`));
+    }
     if (node && String(node.attachedTo || '').toUpperCase() !== secretary.replace('_SECRETARY', '')) {
       errors.push(mapError('SECRETARY_DETACHED', secretary));
     }

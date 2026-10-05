@@ -34,12 +34,12 @@ const plannedStations = [
   {
     stationId: 'DRIVE_STATION', destinationId: 'GOOGLE_DRIVE', ownerSystem: 'GOOGLE_DRIVE',
     status: STATION_PLAN_STATUS.READY_TO_BIND,
-    cargoKinds: [CARGO_KIND.PEOPLE_AGENT, CARGO_KIND.DATA, CARGO_KIND.ARTIFACT, CARGO_KIND.EVIDENCE], runtimeBinding: null,
+    cargoKinds: [CARGO_KIND.DATA, CARGO_KIND.ARTIFACT, CARGO_KIND.EVIDENCE], runtimeBinding: null,
   },
   {
     stationId: 'NOTION_STATION', destinationId: 'NOTION', ownerSystem: 'NOTION',
     status: STATION_PLAN_STATUS.READY_TO_BIND,
-    cargoKinds: [CARGO_KIND.PEOPLE_AGENT, CARGO_KIND.DATA, CARGO_KIND.ARTIFACT, CARGO_KIND.EVIDENCE], runtimeBinding: null,
+    cargoKinds: [CARGO_KIND.DATA, CARGO_KIND.ARTIFACT, CARGO_KIND.EVIDENCE], runtimeBinding: null,
   },
 ];
 

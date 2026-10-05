@@ -13,3 +13,14 @@ test('Station Plan keeps Drive and Notion distinct', () => {
   plan.stations.find((station) => station.stationId === 'NOTION_STATION').destinationId = 'GOOGLE_DRIVE';
   assert.equal(validateStationPlan(plan).errors.some((error) => error.code === 'DESTINATION_DUPLICATE'), true);
 });
+
+test('Station Plan does not infer actor travel for Drive or Notion', () => {
+  for (const stationId of ['DRIVE_STATION', 'NOTION_STATION']) {
+    const station = STATION_PLAN_V1.stations.find((item) => item.stationId === stationId);
+    assert.equal(station.cargoKinds.includes('PEOPLE_AGENT'), false);
+  }
+  for (const stationId of ['FACTORY_STATION', 'PRISM_STATION']) {
+    const station = STATION_PLAN_V1.stations.find((item) => item.stationId === stationId);
+    assert.equal(station.cargoKinds.includes('PEOPLE_AGENT'), true);
+  }
+});
