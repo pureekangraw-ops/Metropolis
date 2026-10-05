@@ -44,6 +44,21 @@ test('Authority is checked before dispatch', async () => {
   const { station, rail } = pair({ stationId: 'STATION-GITHUB', railId: 'RAIL-GITHUB', ownerSystem: 'GITHUB', adapter });
   engine.registerStation({ station, rail, adapter });
   const result = await engine.travel({ actor: 'LIGHT', workId: 'WORK-2', stationId: station.stationId, operation: 'CREATE_BRANCH' });
+  assert.equal(result.outcome, 'UNKNOWN');
+  assert.equal(result.failure.stage, 'RAIL');
+  assert.equal(result.failure.code, 'RAIL_CAPABILITY_UNKNOWN');
+  assert.equal(dispatched, false);
+});
+
+test('Denied Agent authority is distinct from a verified Rail capability', async () => {
+  let dispatched = false;
+  const adapter = readyAdapter();
+  adapter.dispatch = async () => { dispatched = true; return { accepted: true }; };
+  adapter.probe = async () => ({ status: STATION_STATUS.READY, scope: ['READ_REPOSITORY'], capabilities: { READ_REPOSITORY: { status: 'READY' } }, connectivity: { status: STATION_STATUS.READY }, readback: { supported: true }, observedAt: '2026-10-05T00:00:01Z' });
+  const engine = createConnectionEngine({ authorizer: createAuthorityGate([]) });
+  const { station, rail } = pair({ stationId: 'STATION-GITHUB', railId: 'RAIL-GITHUB', ownerSystem: 'GITHUB', adapter });
+  engine.registerStation({ station, rail, adapter });
+  const result = await engine.travel({ actor: 'LIGHT', workId: 'WORK-2', stationId: station.stationId, operation: 'READ_REPOSITORY' });
   assert.equal(result.outcome, 'FAILED');
   assert.equal(result.failure.stage, 'AUTH');
   assert.equal(dispatched, false);
@@ -69,7 +84,7 @@ test('Station failure is isolated from another ready Station', async () => {
   engine.registerStation(github);
   engine.registerStation(notion);
   const failed = await engine.travel({ actor: 'GO', workId: 'WORK-4', stationId: github.station.stationId, operation: 'READ_REPOSITORY' });
-  const healthy = await engine.travel({ actor: 'GO', workId: 'WORK-4', stationId: notion.station.stationId, operation: 'READ_PAGE' });
+  const healthy = await engine.travel({ actor: 'GO', workId: 'WORK-4', stationId: notion.station.stationId, operation: 'READ_REPOSITORY' });
   assert.equal(failed.outcome, 'FAILED');
   assert.equal(failed.failure.stage, 'STATION');
   assert.equal(healthy.outcome, 'VERIFIED');

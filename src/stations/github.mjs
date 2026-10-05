@@ -30,16 +30,27 @@ function statusFromResponse(response) {
   return 'UNKNOWN';
 }
 
+function writeCapability(repository, token) {
+  if (!token) return { status: 'UNKNOWN', reason: 'WRITE_CREDENTIAL_UNAVAILABLE' };
+  if (typeof repository?.permissions?.push !== 'boolean') return { status: 'UNKNOWN', reason: 'WRITE_PERMISSION_UNVERIFIED' };
+  return repository.permissions.push
+    ? { status: 'READY', reason: 'WRITE_PERMISSION_CONFIRMED' }
+    : { status: 'DENIED', reason: 'WRITE_PERMISSION_DENIED' };
+}
+
 export function createGitHubRailAdapter({ owner, repo, token = '', fetchImpl = fetch, now = () => new Date().toISOString() }) {
   if (!owner || !repo) throw new TypeError('github_owner_repo_REQUIRED');
 
   async function probe({ station, rail }) {
     const result = await jsonRequest(fetchImpl, apiUrl(owner, repo), { token });
     const status = statusFromResponse(result.response);
+    const readCapability = { status: result.response.ok ? 'READY' : status, reason: result.response.ok ? 'REPOSITORY_READ_CONFIRMED' : 'REPOSITORY_READ_UNAVAILABLE' };
+    const writeCapability = writeCapabilityFor(result.json, token);
     return {
       status,
       identity: { stationId: station.stationId, railId: rail.railId, ownerSystem: station.ownerSystem },
-      scope: ['READ_REPOSITORY', ...(token ? ['CREATE_BRANCH'] : [])],
+      scope: ['READ_REPOSITORY', ...(writeCapability.status === 'READY' ? ['CREATE_BRANCH'] : [])],
+      capabilities: { READ_REPOSITORY: readCapability, CREATE_BRANCH: writeCapability },
       connectivity: { status, httpStatus: result.response.status },
       limit: { status: 'UNKNOWN' },
       readback: { supported: result.response.ok },
@@ -81,4 +92,12 @@ export function createGitHubRailAdapter({ owner, repo, token = '', fetchImpl = f
   }
 
   return Object.freeze({ probe, dispatch, readback });
+}
+
+function writeCapabilityFor(repository, token) {
+  if (!token) return { status: 'UNKNOWN', reason: 'WRITE_CREDENTIAL_UNAVAILABLE' };
+  if (typeof repository?.permissions?.push !== 'boolean') return { status: 'UNKNOWN', reason: 'WRITE_PERMISSION_UNVERIFIED' };
+  return repository.permissions.push
+    ? { status: 'READY', reason: 'WRITE_PERMISSION_CONFIRMED' }
+    : { status: 'DENIED', reason: 'WRITE_PERMISSION_DENIED' };
 }

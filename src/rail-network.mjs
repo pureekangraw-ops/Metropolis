@@ -20,18 +20,32 @@ function makeFailure(stage, code, message = '') {
   return { stage, code, message: String(message) };
 }
 
+function normalizeCapabilities(snapshot) {
+  if (snapshot.capabilities && typeof snapshot.capabilities === 'object') return snapshot.capabilities;
+  return Object.fromEntries((snapshot.scope || []).map((operation) => [operation, { status: 'READY', reason: 'SCOPE_DECLARED' }]));
+}
+
 function normalizeSnapshot(entry, snapshot = {}) {
   const status = snapshot.status || STATION_STATUS.UNKNOWN;
   return Object.freeze({
     status,
-    identity: { stationId: entry.station.stationId, railId: entry.station.railId, ownerSystem: entry.station.ownerSystem },
+    identity: snapshot.identity || { stationId: entry.station.stationId, railId: entry.station.railId, ownerSystem: entry.station.ownerSystem },
     credential: { configured: Boolean(entry.station.credentialRef), reference: entry.station.credentialRef },
     scope: snapshot.scope || [],
+    capabilities: normalizeCapabilities(snapshot),
     connectivity: snapshot.connectivity || { status: STATION_STATUS.UNKNOWN },
     limit: snapshot.limit || { status: 'UNKNOWN' },
     readback: snapshot.readback || { supported: false },
     observedAt: snapshot.observedAt || null,
   });
+}
+
+function railCapability(snapshot, operation) {
+  return snapshot.capabilities?.[operation] || { status: STATION_STATUS.UNKNOWN, reason: 'CAPABILITY_UNVERIFIED' };
+}
+
+function outcomeForRailCapability(capability) {
+  return capability.status === STATION_STATUS.UNKNOWN ? 'UNKNOWN' : 'FAILED';
 }
 
 export function createConnectionEngine({ clock = () => new Date().toISOString(), idFactory = () => crypto.randomUUID(), authorizer } = {}) {
@@ -90,6 +104,20 @@ export function createConnectionEngine({ clock = () => new Date().toISOString(),
         return { outcome: stationSnapshot.status === STATION_STATUS.UNKNOWN ? 'UNKNOWN' : 'FAILED', oath, trace, station: stationSnapshot, failure };
       }
 
+      stage = 'RAIL';
+      const identity = stationSnapshot.identity || {};
+      if (identity.stationId !== entry.station.stationId || identity.railId !== entry.rail.railId || identity.ownerSystem !== entry.station.ownerSystem) {
+        const failure = makeFailure('RAIL', 'RAIL_IDENTITY_MISMATCH', 'Runtime identity does not match the registered Station/Rail pair');
+        oath = failOath(oath, failure, clock());
+        return { outcome: 'FAILED', oath, trace, station: stationSnapshot, failure };
+      }
+      const capability = railCapability(stationSnapshot, request.operation);
+      if (capability.status !== STATION_STATUS.READY) {
+        const failure = makeFailure('RAIL', `RAIL_CAPABILITY_${capability.status}`, capability.reason || 'Rail capability is not verified');
+        oath = failOath(oath, failure, clock());
+        return { outcome: outcomeForRailCapability(capability), oath, trace, station: stationSnapshot, failure };
+      }
+
       stage = 'AUTH';
       const decision = await authorizer(request);
       if (!decision?.allowed) {
@@ -123,7 +151,7 @@ export function createConnectionEngine({ clock = () => new Date().toISOString(),
     } catch (error) {
       const failure = makeFailure(error.stage || stage, error.code || 'TRANSPORT_ERROR', error.message);
       if (oath.state !== OATH_STATE.FAILED) oath = failOath(oath, failure, clock());
-      return { outcome: failure.code.startsWith('STATION_') ? 'UNKNOWN' : 'FAILED', oath, trace, failure };
+      return { outcome: failure.stage === 'STATION' ? 'UNKNOWN' : 'FAILED', oath, trace, failure };
     }
   }
 
