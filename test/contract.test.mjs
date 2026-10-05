@@ -49,7 +49,7 @@ test('one Station owns exactly one Rail and its credential boundary', () => {
 });
 
 test('TRANSPORT transports over the Station/Rail pair without selecting authority', () => {
-  const transport = createOathEnvelope({
+  const transport = createTransportEnvelope({
     transportId: 'TRANSPORT-1',
     workId: 'WORK-1',
     stationId: 'STATION-FACTORY',
