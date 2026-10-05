@@ -29,9 +29,9 @@ HERMES       intake / registration / index
   ↓
 WORK SYSTEM  work identity / lifecycle / checkpoint / handoff
   ↓
-STATION      connection point
+STATION      one connection boundary for one Rail and its credential
   ↓
-RAIL         destination-specific connection
+RAIL         one destination-specific connection bound to one Station
   ↓
 OATH         transport / receipt / readback
   ↓
@@ -57,18 +57,20 @@ Work System, Station, Rail, OATH and Data Management are system components, not 
 
 ## Connection vocabulary
 
-- **Station:** a connection point that groups access to a destination.
-- **Rail:** a destination-specific connection, associated with a credential reference.
-- **OATH:** the transport envelope moving over a Rail; it does not select truth or authority.
+- **Station:** one connection boundary owning exactly one Rail and its credential reference.
+- **Rail:** one destination-specific connection bound to exactly one Station.
+- **OATH:** the transport envelope moving over the Station/Rail pair; it does not select truth or authority.
 - **Owner System:** the system that performs and reports its own operation.
 
-Credential values never belong in a Rail contract. Rails carry safe credential references only.
+Credential values belong to the Station boundary. Rails and OATH carry references and transport metadata, never raw credentials.
 
 ## Implementation guardrails
 
 1. Keep City Hall and Owner Systems deployable independently.
-2. Keep Work identity separate from Owner operational state.
-3. Require live Owner readback before treating an operation as complete.
-4. Treat reconciliation as observation and classification, not automatic conflict resolution.
-5. Preserve `UNKNOWN` when the Owner or connection cannot be read.
-6. Add a new route only through an explicit Station/Rail/OATH contract.
+2. Enforce `1 Station = 1 Rail` and `1 Rail = 1 Station`.
+3. Keep the credential boundary at Station; do not duplicate it on Rail.
+4. Keep Work identity separate from Owner operational state.
+5. Require live Owner readback before treating an operation as complete.
+6. Treat reconciliation as observation and classification, not automatic conflict resolution.
+7. Preserve `UNKNOWN` when the Owner or connection cannot be read.
+8. Add a new route only through an explicit Station/Rail/OATH contract.

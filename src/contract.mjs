@@ -7,8 +7,8 @@ export const METROPOLIS_ROLES = Object.freeze({
   CITY_HALL: 'intake_return_data',
   HERMES: 'intake_registration_index',
   WORK_SYSTEM: 'work_identity_lifecycle_continuity',
-  STATION: 'connection_point',
-  RAIL: 'owner_connection',
+  STATION: 'connection_point_one_rail',
+  RAIL: 'owner_connection_one_station',
   OATH: 'transport',
   MIMIR: 'return_organization_index',
   OWNER_SYSTEM: 'domain_operation',
@@ -56,6 +56,7 @@ export function createStation(input = {}) {
   return Object.freeze({
     kind: 'STATION',
     stationId: requiredString(input.stationId, 'stationId'),
+    railId: requiredString(input.railId, 'railId'),
     ownerSystem: requiredString(input.ownerSystem, 'ownerSystem'),
     credentialRef: credentialReference(input.credentialRef),
   });
@@ -67,7 +68,6 @@ export function createRail(input = {}) {
     railId: requiredString(input.railId, 'railId'),
     stationId: requiredString(input.stationId, 'stationId'),
     ownerSystem: requiredString(input.ownerSystem, 'ownerSystem'),
-    credentialRef: credentialReference(input.credentialRef),
   });
 }
 

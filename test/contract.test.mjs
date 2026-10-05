@@ -29,27 +29,44 @@ test('Work identity carries continuity without copying owner operational state',
   assert.equal(Object.hasOwn(identity, 'currentState'), false);
 });
 
-test('Station, Rail and OATH remain distinct boundaries', () => {
-  const station = createStation({ stationId: 'STATION-FACTORY', ownerSystem: 'FACTORY', credentialRef: 'credential://factory/main' });
-  const rail = createRail({ railId: 'RAIL-FACTORY', stationId: station.stationId, ownerSystem: 'FACTORY', credentialRef: station.credentialRef });
+test('one Station owns exactly one Rail and its credential boundary', () => {
+  const station = createStation({
+    stationId: 'STATION-FACTORY',
+    railId: 'RAIL-FACTORY',
+    ownerSystem: 'FACTORY',
+    credentialRef: 'credential://factory/main',
+  });
+  const rail = createRail({
+    railId: station.railId,
+    stationId: station.stationId,
+    ownerSystem: station.ownerSystem,
+  });
+  assert.equal(station.kind, 'STATION');
+  assert.equal(rail.kind, 'RAIL');
+  assert.equal(station.railId, rail.railId);
+  assert.equal(rail.stationId, station.stationId);
+  assert.equal(Object.hasOwn(rail, 'credentialRef'), false);
+});
+
+test('OATH transports over the Station/Rail pair without selecting authority', () => {
   const oath = createOathEnvelope({
     oathId: 'OATH-1',
     workId: 'WORK-1',
-    stationId: station.stationId,
-    railId: rail.railId,
+    stationId: 'STATION-FACTORY',
+    railId: 'RAIL-FACTORY',
     operation: 'READ_REALITY',
     payload: {},
     requestedAt: '2026-10-05T00:00:00Z',
   });
-  assert.equal(station.kind, 'STATION');
-  assert.equal(rail.kind, 'RAIL');
   assert.equal(oath.kind, 'OATH');
-  assert.equal(rail.ownerSystem, 'FACTORY');
+  assert.equal(oath.stationId, 'STATION-FACTORY');
+  assert.equal(oath.railId, 'RAIL-FACTORY');
+  assert.equal(Object.hasOwn(oath, 'authority'), false);
 });
 
-test('Rail rejects raw credentials', () => {
+test('Station rejects raw credentials', () => {
   assert.throws(
-    () => createRail({ railId: 'R', stationId: 'S', ownerSystem: 'FACTORY', credentialRef: 'secret-value' }),
+    () => createStation({ stationId: 'S', railId: 'R', ownerSystem: 'FACTORY', credentialRef: 'secret-value' }),
     /credentialRef_MUST_BE_REFERENCE/,
   );
 });
