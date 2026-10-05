@@ -2,9 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { assertStationPlan, STATION_PLAN_V1, validateStationPlan } from '../src/station-plan.mjs';
 
-test('Station Plan v1 is ready to bind but does not connect runtime', () => {
+test('Station Plan binds only the ready Factory runtime', () => {
   assert.equal(assertStationPlan(STATION_PLAN_V1).ok, true);
-  assert.equal(STATION_PLAN_V1.runtimeConnected, false);
+  assert.equal(STATION_PLAN_V1.runtimeConnected, true);
   assert.equal(STATION_PLAN_V1.stations.every((station) => station.runtimeBinding === null), true);
 });
 
