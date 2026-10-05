@@ -27,7 +27,7 @@ function baseSpec() {
     stations: [{ stationId: 'FACTORY_STATION', destinationId: 'FACTORY' }],
     routes: [
       { id: 'GO_TO_FACTORY', mode: MOVEMENT_MODE.RAIL, traveler: TRAVELER_KIND.PEOPLE_AGENT, via: ['FACTORY_STATION'] },
-      { id: 'RETURN_ARTIFACT', mode: MOVEMENT_MODE.RAIL, traveler: TRAVELER_KIND.DATA_CARGO, via: ['POST_OFFICE'] },
+      { id: 'RETURN_ARTIFACT', mode: MOVEMENT_MODE.RAIL, traveler: TRAVELER_KIND.DATA_CARGO, crossesSystemBoundary: true, stationId: 'FACTORY_STATION', via: ['FACTORY_STATION', 'POST_OFFICE'] },
     ],
   };
 }
@@ -52,11 +52,23 @@ test('rejects station-as-destination collapse', () => {
     && error.errors.some(item => item.code === 'STATION_EQUALS_DESTINATION'));
 });
 
-test('keeps cargo on Rail and people away from Post Office', () => {
-  const cargoOnPath = baseSpec();
-  cargoOnPath.routes[1].mode = MOVEMENT_MODE.PATH;
-  assert.equal(validateMapInterpretation(cargoOnPath).errors[0].code, 'CARGO_REQUIRES_RAIL');
+test('allows local cargo on Path but requires Station and Rail across a system boundary', () => {
+  const localCargo = baseSpec();
+  localCargo.routes[1].mode = MOVEMENT_MODE.PATH;
+  localCargo.routes[1].crossesSystemBoundary = false;
+  delete localCargo.routes[1].stationId;
+  assert.equal(validateMapInterpretation(localCargo).ok, true);
 
+  const cargoOnPathAcrossBoundary = baseSpec();
+  cargoOnPathAcrossBoundary.routes[1].mode = MOVEMENT_MODE.PATH;
+  assert.equal(validateMapInterpretation(cargoOnPathAcrossBoundary).errors[0].code, 'CARGO_REQUIRES_RAIL');
+
+  const cargoOnRailWithoutStation = baseSpec();
+  delete cargoOnRailWithoutStation.routes[1].stationId;
+  assert.equal(validateMapInterpretation(cargoOnRailWithoutStation).errors[0].code, 'CARGO_REQUIRES_STATION');
+});
+
+test('keeps people away from Post Office', () => {
   const peopleThroughPost = baseSpec();
   peopleThroughPost.routes[0].via = ['POST_OFFICE'];
   assert.equal(validateMapInterpretation(peopleThroughPost).errors[0].code, 'PEOPLE_MUST_NOT_USE_POST_OFFICE');

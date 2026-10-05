@@ -125,14 +125,21 @@ function validateRoutes(routes, errors) {
     const mode = upper(route?.mode);
     const traveler = upper(route?.traveler);
     const via = list(route?.via).map(upper);
+    const crossesSystemBoundary = route?.crossesSystemBoundary === true;
+    const stationId = upper(route?.stationId);
     if (!Object.values(MOVEMENT_MODE).includes(mode)) {
       errors.push(error('MOVEMENT_MODE_INVALID', `${route?.id || 'Route'} must use PATH or RAIL.`));
     }
     if (!Object.values(TRAVELER_KIND).includes(traveler)) {
       errors.push(error('TRAVELER_KIND_INVALID', `${route?.id || 'Route'} must identify people/agent or data/cargo.`));
     }
-    if (traveler === TRAVELER_KIND.DATA_CARGO && mode !== MOVEMENT_MODE.RAIL) {
-      errors.push(error('CARGO_REQUIRES_RAIL', `${route?.id || 'Cargo route'} must use RAIL.`));
+    if (traveler === TRAVELER_KIND.DATA_CARGO && crossesSystemBoundary) {
+      if (mode !== MOVEMENT_MODE.RAIL) {
+        errors.push(error('CARGO_REQUIRES_RAIL', `${route?.id || 'Cargo route'} crossing a system boundary must use RAIL.`));
+      }
+      if (!stationId) {
+        errors.push(error('CARGO_REQUIRES_STATION', `${route?.id || 'Cargo route'} crossing a system boundary must name a Station.`));
+      }
     }
     if (traveler === TRAVELER_KIND.PEOPLE_AGENT && via.includes('POST_OFFICE')) {
       errors.push(error('PEOPLE_MUST_NOT_USE_POST_OFFICE', `${route?.id || 'Agent route'} cannot use POST_OFFICE.`));
