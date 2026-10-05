@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createAuthorityGate } from '../src/authority.mjs';
+import { createAuthorityBoundary } from '../src/authority.mjs';
 import { createRail, createStation } from '../src/contract.mjs';
 import { createConnectionEngine, STATION_STATUS } from '../src/rail-network.mjs';
 
@@ -22,17 +22,17 @@ function readyAdapter({ verified = true } = {}) {
 
 test('Connection Engine runs REQUEST to READBACK and returns evidence', async () => {
   const engine = createConnectionEngine({
-    idFactory: () => 'OATH-1',
+    idFactory: () => 'TRANSPORT-1',
     clock: (() => { let i = 0; return () => `2026-10-05T00:00:0${i++}Z`; })(),
-    authorizer: createAuthorityGate([{ actor: 'GO', stationId: 'STATION-GITHUB', operation: 'READ_REPOSITORY', workId: 'WORK-1' }]),
+    authorizer: createAuthorityBoundary([{ actor: 'GO', stationId: 'STATION-GITHUB', operation: 'READ_REPOSITORY', workId: 'WORK-1' }]),
   });
   const { station, rail, adapter } = pair({ stationId: 'STATION-GITHUB', railId: 'RAIL-GITHUB', ownerSystem: 'GITHUB', adapter: readyAdapter() });
   engine.registerStation({ station, rail, adapter });
   const result = await engine.travel({ actor: 'GO', workId: 'WORK-1', stationId: station.stationId, operation: 'READ_REPOSITORY' });
   assert.equal(result.outcome, 'VERIFIED');
-  assert.equal(result.oath.state, 'READBACK');
-  assert.equal(result.oath.actor, 'GO');
-  assert.equal(result.oath.evidenceRef, 'evidence://readback-1');
+  assert.equal(result.transport.state, 'READBACK');
+  assert.equal(result.transport.actor, 'GO');
+  assert.equal(result.transport.evidenceRef, 'evidence://readback-1');
   assert.deepEqual(result.trace.map((item) => item.state).filter(Boolean), ['REQUEST', 'ACCEPTED', 'DISPATCHED', 'RECEIPT', 'READBACK']);
 });
 
@@ -40,7 +40,7 @@ test('Unverified Rail capability stops travel before dispatch', async () => {
   let dispatched = false;
   const adapter = readyAdapter();
   adapter.dispatch = async () => { dispatched = true; return { accepted: true }; };
-  const engine = createConnectionEngine({ authorizer: createAuthorityGate([{ actor: 'LIGHT', stationId: 'STATION-GITHUB', operation: 'CREATE_BRANCH', workId: 'WORK-2' }]) });
+  const engine = createConnectionEngine({ authorizer: createAuthorityBoundary([{ actor: 'LIGHT', stationId: 'STATION-GITHUB', operation: 'CREATE_BRANCH', workId: 'WORK-2' }]) });
   const { station, rail } = pair({ stationId: 'STATION-GITHUB', railId: 'RAIL-GITHUB', ownerSystem: 'GITHUB', adapter });
   engine.registerStation({ station, rail, adapter });
   const result = await engine.travel({ actor: 'LIGHT', workId: 'WORK-2', stationId: station.stationId, operation: 'CREATE_BRANCH' });
@@ -55,7 +55,7 @@ test('Denied Agent authority is distinct from a verified Rail capability', async
   const adapter = readyAdapter();
   adapter.dispatch = async () => { dispatched = true; return { accepted: true }; };
   adapter.probe = async () => ({ status: STATION_STATUS.READY, scope: ['READ_REPOSITORY'], capabilities: { READ_REPOSITORY: { status: 'READY' } }, connectivity: { status: STATION_STATUS.READY }, readback: { supported: true }, observedAt: '2026-10-05T00:00:01Z' });
-  const engine = createConnectionEngine({ authorizer: createAuthorityGate([]) });
+  const engine = createConnectionEngine({ authorizer: createAuthorityBoundary([]) });
   const { station, rail } = pair({ stationId: 'STATION-GITHUB', railId: 'RAIL-GITHUB', ownerSystem: 'GITHUB', adapter });
   engine.registerStation({ station, rail, adapter });
   const result = await engine.travel({ actor: 'LIGHT', workId: 'WORK-2', stationId: station.stationId, operation: 'READ_REPOSITORY' });
@@ -65,17 +65,17 @@ test('Denied Agent authority is distinct from a verified Rail capability', async
 });
 
 test('Receipt without verified readback is UNKNOWN, not success', async () => {
-  const engine = createConnectionEngine({ authorizer: createAuthorityGate([{ actor: 'GO', stationId: 'STATION-GITHUB', operation: 'READ_REPOSITORY' }]) });
+  const engine = createConnectionEngine({ authorizer: createAuthorityBoundary([{ actor: 'GO', stationId: 'STATION-GITHUB', operation: 'READ_REPOSITORY' }]) });
   const { station, rail, adapter } = pair({ stationId: 'STATION-GITHUB', railId: 'RAIL-GITHUB', ownerSystem: 'GITHUB', adapter: readyAdapter({ verified: false }) });
   engine.registerStation({ station, rail, adapter });
   const result = await engine.travel({ actor: 'GO', workId: 'WORK-3', stationId: station.stationId, operation: 'READ_REPOSITORY' });
   assert.equal(result.outcome, 'UNKNOWN');
   assert.equal(result.failure.stage, 'READBACK');
-  assert.equal(result.oath.state, 'READBACK');
+  assert.equal(result.transport.state, 'READBACK');
 });
 
 test('Station failure is isolated from another ready Station', async () => {
-  const engine = createConnectionEngine({ authorizer: createAuthorityGate([
+  const engine = createConnectionEngine({ authorizer: createAuthorityBoundary([
     { actor: 'GO', stationId: 'STATION-GITHUB', operation: 'READ_REPOSITORY' },
     { actor: 'GO', stationId: 'STATION-NOTION', operation: 'READ_REPOSITORY' },
   ]) });
