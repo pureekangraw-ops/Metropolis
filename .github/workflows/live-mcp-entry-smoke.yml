@@ -14,7 +14,7 @@ jobs:
         run: |
           set -euo pipefail
           BASE="https://metropolis.pureekangraw.workers.dev"
-          EXPECTED_SHA="41c4b1045eb78d6c98f6830e615d4fe4bec2c926"
+          EXPECTED_SHA="12b9e64763eae5106a18ab25985e1db647e8a958"
 
           echo "== health =="
           curl -fsS "$BASE/health" -o health.json
@@ -27,7 +27,7 @@ jobs:
             -H 'Origin: https://chatgpt.com' \
             -H 'Content-Type: application/json' \
             -H 'Accept: application/json, text/event-stream' \
-            --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"live-smoke","version":"3"}}}')
+            --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"live-smoke","version":"4"}}}')
           cat mcp.headers
           cat mcp.json
           test "$code" = "401"
