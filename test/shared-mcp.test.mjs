@@ -87,47 +87,46 @@ test('arrival refreshes schema and shows only authorized current Work pointers w
   assert.deepEqual(light.current.works, []);
 });
 
-test('stale schema blocks writes and returns current station manifest', async () => {
+test('current server schema governs Work calls without a client schema echo', async () => {
   const store = createMemoryStore();
   const runtime = createCityRuntime({ store });
-  const old = await arrive(service('old'));
+  await arrive(service('old'));
   const server = service('new', runtime, [{ actor: 'GO', action: 'intake', workId: 'W1', ownerSystem: 'FACTORY' }]);
-  const reply = await (await rpc(server, 'tools/call', { name: 'metropolis_work', arguments: { action: 'intake', workId: 'W1', checkpointId: 'CP-EXISTING', schemaHash: old.schemaHash, payload: { ownerSystem: 'FACTORY' } } })).json();
-  assert.equal(reply.result.isError, true);
-  assert.equal(reply.result.structuredContent.reason, 'SCHEMA_REFRESH_REQUIRED');
-  assert.equal(reply.result.structuredContent.current.sourceSha, 'new');
-  assert.equal(await runtime.getWork('W1'), undefined);
+  const reply = await (await rpc(server, 'tools/call', { name: 'metropolis_work', arguments: { action: 'intake', workId: 'W1', payload: {} } })).json();
+  assert.equal(reply.result.isError, false);
+  assert.equal(reply.result.structuredContent.record.ownerSystem, 'FACTORY');
+  assert.equal(reply.result.structuredContent.record.checkpointId, 'W1:CP-01');
 });
-test('Work identity and supplied checkpoint survive intake and readback', async () => {
+test('Work identity and server-owned checkpoint survive intake and readback', async () => {
   const runtime = createCityRuntime();
   const server = service('one', runtime, [{ actor: 'GO', action: 'intake', workId: 'W1', ownerSystem: 'FACTORY' }, grant]);
-  const manifest = await arrive(server);
-  const args = { schemaHash: manifest.schemaHash, action: 'intake', workId: 'W1', checkpointId: 'CP-ORIGINAL', payload: { ownerSystem: 'FACTORY' } };
-  const intake = (await (await rpc(server, 'tools/call', { name: 'metropolis_work', arguments: args })).json()).result;
+  await arrive(server);
+  const intake = (await (await rpc(server, 'tools/call', { name: 'metropolis_work', arguments: { action: 'intake', workId: 'W1', payload: {} } })).json()).result;
   assert.equal(intake.isError, false);
-  assert.equal(intake.structuredContent.record.checkpointId, 'CP-ORIGINAL');
+  assert.equal(intake.structuredContent.record.checkpointId, 'W1:CP-01');
+  assert.equal(intake.structuredContent.record.ownerSystem, 'FACTORY');
   assert.equal(intake.structuredContent.record.requestedBy, 'GO');
   assert.equal(intake.structuredContent.readbackVerified, true);
-  const read = (await (await rpc(server, 'tools/call', { name: 'metropolis_work', arguments: { ...args, action: 'read', payload: {} } })).json()).result;
+  const read = (await (await rpc(server, 'tools/call', { name: 'metropolis_work', arguments: { action: 'read', workId: 'W1' } })).json()).result;
   assert.equal(read.structuredContent.record.workId, 'W1');
 });
 test('LIGHT cannot reuse GO grant or self-declare GO identity', async () => {
   const runtime = createCityRuntime();
   await runtime.intake({ workId: 'W1', ownerSystem: 'FACTORY' });
   const server = service('one', runtime);
-  const manifest = await arrive(server, 'light');
-  const reply = (await (await rpc(server, 'tools/call', { name: 'metropolis_work', arguments: { action: 'read', workId: 'W1', checkpointId: 'W1:CP-01', schemaHash: manifest.schemaHash, payload: { actor: 'GO' } } }, 'light')).json()).result;
+  await arrive(server, 'light');
+  const reply = (await (await rpc(server, 'tools/call', { name: 'metropolis_work', arguments: { action: 'read', workId: 'W1', payload: { actor: 'GO' } } }, 'light')).json()).result;
   assert.equal(reply.isError, true);
   assert.equal(reply.structuredContent.reason, 'NO_GRANT');
 });
-test('read requires same checkpoint and does not reveal another Work', async () => {
+test('read uses the current Work context without caller checkpoint input', async () => {
   const runtime = createCityRuntime();
   await runtime.intake({ workId: 'W1', ownerSystem: 'FACTORY' });
   const server = service('one', runtime);
-  const manifest = await arrive(server);
-  const reply = (await (await rpc(server, 'tools/call', { name: 'metropolis_work', arguments: { action: 'read', workId: 'W1', checkpointId: 'wrong', schemaHash: manifest.schemaHash } })).json()).result;
-  assert.equal(reply.structuredContent.reason, 'CHECKPOINT_MISMATCH');
-  assert.equal(reply.structuredContent.record, undefined);
+  await arrive(server);
+  const reply = (await (await rpc(server, 'tools/call', { name: 'metropolis_work', arguments: { action: 'read', workId: 'W1' } })).json()).result;
+  assert.equal(reply.isError, false);
+  assert.equal(reply.structuredContent.record.checkpointId, 'W1:CP-01');
 });
 test('rejects foreign browser origins and unsupported transport versions', async () => {
   const request = new Request(origin + '/mcp', { method: 'POST', headers: { origin: 'https://evil.example', authorization: 'Bearer go' }, body: '{}' });
@@ -146,8 +145,8 @@ test('return records evidence without accepting an agent claim of verified execu
   const runtime = createCityRuntime();
   await runtime.intake({ workId: 'W1', ownerSystem: 'FACTORY' });
   const server = service('one', runtime, [{ actor: 'GO', action: 'return', workId: 'W1' }]);
-  const manifest = await arrive(server);
-  const reply = (await (await rpc(server, 'tools/call', { name: 'metropolis_work', arguments: { schemaHash: manifest.schemaHash, action: 'return', workId: 'W1', checkpointId: 'W1:CP-01', payload: { verified: true, evidenceRefs: ['evidence://one'] } } })).json()).result;
+  await arrive(server);
+  const reply = (await (await rpc(server, 'tools/call', { name: 'metropolis_work', arguments: { action: 'return', workId: 'W1', payload: { verified: true, evidenceRefs: ['evidence://one'] } } })).json()).result;
   assert.equal(reply.structuredContent.record.return.verified, false);
   assert.equal(reply.structuredContent.ownerExecutionVerified, false);
 });
@@ -155,8 +154,8 @@ test('handoff cannot widen its destination or override its Work identity', async
   const runtime = createCityRuntime();
   await runtime.intake({ workId: 'W1', ownerSystem: 'FACTORY' });
   const server = service('one', runtime, [{ actor: 'GO', action: 'handoff', workId: 'W1', stationId: 'FACTORY_STATION', operation: 'CODE' }]);
-  const manifest = await arrive(server);
-  const args = { schemaHash: manifest.schemaHash, action: 'handoff', workId: 'W1', checkpointId: 'W1:CP-01', payload: { stationId: 'OTHER_STATION', operation: 'CODE' } };
+  await arrive(server);
+  const args = { action: 'handoff', workId: 'W1', payload: { stationId: 'OTHER_STATION', operation: 'CODE' } };
   const denied = (await (await rpc(server, 'tools/call', { name: 'metropolis_work', arguments: args })).json()).result;
   assert.equal(denied.structuredContent.reason, 'DESTINATION_NOT_GRANTED');
   args.payload.stationId = 'FACTORY_STATION';
