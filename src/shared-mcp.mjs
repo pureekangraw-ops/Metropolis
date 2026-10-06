@@ -35,15 +35,15 @@ const tools = [
   {
     name: 'metropolis_work',
     title: 'Use Metropolis Work',
-    description: 'Use existing City Hall Work operations with authenticated identity and current schemaHash. Refresh at metropolis_arrive when SCHEMA_REFRESH_REQUIRED. Never self-declare actor or permissions.',
-    inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ACTIONS }, workId: string, checkpointId: string, schemaHash: string, payload: { type: 'object' } }, required: ['action', 'workId', 'checkpointId', 'schemaHash'], additionalProperties: false },
+    description: 'Use existing City Hall Work operations with authenticated identity. The server owns current checkpoint, schema context and granted owner/destination details; callers provide only the Work, action and action payload.',
+    inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ACTIONS }, workId: string, payload: { type: 'object' } }, required: ['action', 'workId'], additionalProperties: false },
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     securitySchemes: oauthSecurity,
   },
 ];
 const actionSchemas = {
   read: { type: 'object', properties: {}, additionalProperties: false },
-  intake: { type: 'object', properties: { ownerSystem: string, inputRefs: { type: 'array', items: string } }, required: ['ownerSystem'], additionalProperties: false },
+  intake: { type: 'object', properties: { inputRefs: { type: 'array', items: string } }, additionalProperties: false },
   handoff: { type: 'object', properties: { stationId: string, operation: string, payload: { type: 'object' } }, required: ['stationId', 'operation'], additionalProperties: false },
   return: { type: 'object', properties: { readback: { type: 'object' }, evidenceRefs: { type: 'array', items: string } }, additionalProperties: false },
 };
@@ -118,40 +118,37 @@ export function createMetropolisMcp({ runtime, authenticate, grants = [], source
     }
     if (name === 'metropolis_arrive') return toolResult(current);
     if (name !== 'metropolis_work') return toolResult({ reason: 'TOOL_NOT_FOUND' }, true);
-    if (args.schemaHash !== current.schemaHash) return toolResult({ reason: 'SCHEMA_REFRESH_REQUIRED', current }, true);
     try {
       const action = required(args.action, 'action');
       const workId = required(args.workId, 'workId');
-      const checkpointId = required(args.checkpointId, 'checkpointId');
       const payload = args.payload || {};
-      const grant = grants.find(g => g.actor === actor && g.action === action && g.workId === workId);
-      if (!grant) return toolResult({ reason: 'NO_GRANT' }, true);
-      if (Object.keys(args).some(k => !['action', 'workId', 'checkpointId', 'schemaHash', 'payload'].includes(k))) throw new Error('INVALID_ARGUMENT');
+      const matchingGrants = grants.filter(g => g.actor === actor && g.action === action && g.workId === workId);
+      if (matchingGrants.length === 0) return toolResult({ reason: 'NO_GRANT' }, true);
+      if (Object.keys(args).some(k => !['action', 'workId', 'payload'].includes(k))) throw new Error('INVALID_ARGUMENT');
       if (typeof payload !== 'object' || Array.isArray(payload)) throw new Error('INVALID_PAYLOAD');
       if (payload.inputRefs && (!Array.isArray(payload.inputRefs) || payload.inputRefs.some(v => typeof v !== 'string'))) throw new Error('INVALID_PAYLOAD');
       if (payload.evidenceRefs && (!Array.isArray(payload.evidenceRefs) || payload.evidenceRefs.some(v => typeof v !== 'string'))) throw new Error('INVALID_PAYLOAD');
-      let before = await runtime.getWork(workId);
-      if (action !== 'intake') {
-        if (!before) throw new Error('WORK_NOT_FOUND');
-        if (before.checkpointId !== checkpointId) throw new Error('CHECKPOINT_MISMATCH');
-      }
+      const before = await runtime.getWork(workId);
+      if (action !== 'intake' && !before) throw new Error('WORK_NOT_FOUND');
       let record;
       if (action === 'read') record = before;
       else if (action === 'intake') {
-        if (grant.ownerSystem !== payload.ownerSystem) throw new Error('OWNER_NOT_GRANTED');
-        record = await runtime.intake({ workId, checkpointId, ownerSystem: payload.ownerSystem, requestedBy: actor, inputRefs: payload.inputRefs || [] });
+        const grant = matchingGrants.find(g => typeof g.ownerSystem === 'string' && g.ownerSystem.trim() !== '');
+        if (!grant) throw new Error('OWNER_NOT_GRANTED');
+        record = await runtime.intake({ workId, ownerSystem: grant.ownerSystem, requestedBy: actor, inputRefs: payload.inputRefs || [] });
       } else if (action === 'handoff') {
-        if (grant.stationId !== payload.stationId || grant.operation !== payload.operation) throw new Error('DESTINATION_NOT_GRANTED');
-        record = await runtime.handoff({ workId, checkpointId, actor, stationId: payload.stationId, operation: payload.operation, payload: payload.payload || {} });
+        const grant = matchingGrants.find(g => g.stationId === payload.stationId && g.operation === payload.operation);
+        if (!grant) throw new Error('DESTINATION_NOT_GRANTED');
+        record = await runtime.handoff({ workId, checkpointId: before.checkpointId, actor, stationId: payload.stationId, operation: payload.operation, payload: payload.payload || {} });
       } else if (action === 'return') {
         // Agent-supplied flags cannot declare verified owner reality.
-        record = await runtime.returnWork({ workId, checkpointId, actor, readback: payload.readback, evidenceRefs: payload.evidenceRefs || [], verified: false });
+        record = await runtime.returnWork({ workId, checkpointId: before.checkpointId, actor, readback: payload.readback, evidenceRefs: payload.evidenceRefs || [], verified: false });
       } else throw new Error('ACTION_NOT_FOUND');
       const readback = await runtime.getWork(workId);
       if (JSON.stringify(record) !== JSON.stringify(readback)) throw new Error('WRITE_READBACK_MISMATCH');
-      return toolResult({ actor, schemaHash: current.schemaHash, record: readback, readbackVerified: true, ownerExecutionVerified: false });
+      return toolResult({ actor, record: readback, readbackVerified: true, ownerExecutionVerified: false });
     } catch (error) {
-      const known = /^(.*_REQUIRED|WORK_NOT_FOUND|WORK_ALREADY_EXISTS|CHECKPOINT_MISMATCH|INVALID_ARGUMENT|INVALID_PAYLOAD|OWNER_NOT_GRANTED|DESTINATION_NOT_GRANTED|ACTION_NOT_FOUND|WRITE_READBACK_MISMATCH)$/;
+      const known = /^(.*_REQUIRED|WORK_NOT_FOUND|WORK_ALREADY_EXISTS|INVALID_ARGUMENT|INVALID_PAYLOAD|OWNER_NOT_GRANTED|DESTINATION_NOT_GRANTED|ACTION_NOT_FOUND|WRITE_READBACK_MISMATCH)$/;
       return toolResult({ reason: known.test(error.message) ? error.message : 'WORK_OPERATION_FAILED' }, true);
     }
   }
@@ -191,7 +188,7 @@ export function createMetropolisMcp({ runtime, authenticate, grants = [], source
         protocolVersion: body.params.protocolVersion,
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: 'metropolis', version },
-        instructions: 'List tools without authentication, then link a GO or LIGHT Metropolis account. Call metropolis_arrive on entry/resume to read CURRENT version and schemas. Use the returned schemaHash on every Work call.',
+        instructions: 'List tools, link a GO or LIGHT Metropolis account, then call metropolis_arrive on entry/resume. Metropolis keeps current Work checkpoint and schema context server-side; callers do not echo internal IDs.',
       });
     }
     if (body.method === 'ping') return reply({});
