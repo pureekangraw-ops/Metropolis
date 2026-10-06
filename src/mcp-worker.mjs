@@ -41,7 +41,7 @@ function configFor(env, storage) {
 }
 
 export function createGateway({ env, storage, sourceSha = SOURCE_SHA } = {}) {
-  let oauth, service, configured = false;
+  let oauth, service, authenticateMcp, resourceMetadataUrl, configured = false;
   try {
     if (!/^[a-f0-9]{40}$/.test(sourceSha)) throw new Error('SOURCE_UNKNOWN');
     const cfg = configFor(env, storage);
@@ -49,10 +49,19 @@ export function createGateway({ env, storage, sourceSha = SOURCE_SHA } = {}) {
     if (!Array.isArray(grants) || grants.some(g => !['GO', 'LIGHT'].includes(g.actor) || !['read', 'intake', 'handoff', 'return'].includes(g.action) || !g.workId || g.workId === '*')) throw new Error('EXPLICIT_WORK_GRANTS_REQUIRED');
     const runtime = createCityRuntime({ sourceSha, store: { get: key => storage.get(key), async put(key, value) { await storage.put(key, value); return value; } } });
     oauth = createOAuthHandler(cfg);
-    service = createMetropolisMcp({ runtime, sourceSha, version: '1.0.0', grants, allowedOrigins: [cfg.issuer, ...JSON.parse(env.MCP_ALLOWED_ORIGINS || '[]')], authenticate: async request => {
+    resourceMetadataUrl = cfg.issuer + '/.well-known/oauth-protected-resource';
+    authenticateMcp = async request => {
       const identity = await verifyAccessToken(request, { ...cfg, requireClientId: true, acceptedClientIds: cfg.clients.map(c => c.clientId) });
       return { actor: identity.subject };
-    } });
+    };
+    service = createMetropolisMcp({
+      runtime,
+      sourceSha,
+      version: '1.0.0',
+      grants,
+      allowedOrigins: [cfg.issuer, 'https://chatgpt.com', ...JSON.parse(env.MCP_ALLOWED_ORIGINS || '[]')],
+      authenticate: authenticateMcp,
+    });
     configured = true;
   } catch { /* Missing or invalid owner configuration fails closed. */ }
   return { async fetch(request) {
@@ -65,6 +74,17 @@ export function createGateway({ env, storage, sourceSha = SOURCE_SHA } = {}) {
       // Identity and authority are still enforced by PKCE, client validation,
       // owner authentication, token validation, scopes and Work grants.
       return oauth(request);
+    }
+    if (url.pathname === '/mcp' && request.method === 'POST') {
+      try {
+        await authenticateMcp(request);
+      } catch {
+        return json(
+          { reason: 'AUTH_REQUIRED' },
+          401,
+          { 'www-authenticate': `Bearer resource_metadata="${resourceMetadataUrl}"` },
+        );
+      }
     }
     return service.fetch(request);
   } };
