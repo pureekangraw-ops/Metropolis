@@ -6,8 +6,8 @@ Requested result: a separate Metropolis MCP connection for GO and LIGHT, with on
 
 - Both actors use the same `/mcp` URL with separate OAuth client identities.
 - `metropolis_arrive` is the arrival/refresh station, not a new Gate or transport subsystem. It returns the current version, exact build SHA, observed time, schema hash, tool schemas, action schemas and actor-specific Work grants.
-- `metropolis_work` is a stable entry to current City Hall operations: read, intake, handoff and return. It requires the schema hash, Work ID and Checkpoint ID. Intake accepts an explicitly supplied checkpoint; it does not silently replace an existing identity.
-- Every call reads the current code/registry and grants; no session captures an old registry. Changed release, schema or actor grants changes the hash. A stale call returns `SCHEMA_REFRESH_REQUIRED` with the current arrival manifest before any Work effect.
+- `metropolis_work` is a stable entry to current City Hall operations: read, intake, handoff and return. Callers provide the Work ID, action and only the action-specific payload. Current schema context and Checkpoint stay server-side. Intake takes its owner from the explicit grant and creates the normal initial Checkpoint; callers do not echo owner, schema or checkpoint IDs.
+- Every call reads the current code/registry, Work record and grants; no session captures an old registry. The server validates each call against the current implementation and current grant instead of requiring the caller to echo a schema hash.
 - A City Hall handoff records continuity; it does not execute a Factory job. Return records agent evidence with owner execution still unverified. Neither operation claims Owner execution or grants merge/deploy authority.
 - The server is stateless Streamable HTTP, JSON responses, MCP protocol versions 2025-03-26 / 2025-06-18 / 2025-11-25. GET `/mcp` returns 405; server-initiated SSE tool-list notifications are not advertised. Existing client rooms must be connected to this new MCP first. Client-side tool caching may still require a reconnect; a server cannot forcibly replace an application's cached tool registry. Stable entry tools let connected old rooms retrieve current action schemas without adding tool names.
 
@@ -51,7 +51,7 @@ Example exact Work grants (replace the identity with the actual existing Work):
 ]
 ```
 
-Intake grants additionally require `ownerSystem`; handoff grants additionally require `stationId` and `operation`. The Station owns its Rail binding, so callers do not supply a Rail ID. This entry does not import old Hub Work records automatically or resolve migration conflicts.
+Intake grants carry `ownerSystem`; callers do not repeat it. Handoff grants additionally require `stationId` and `operation`. The Station owns its Rail binding, so callers do not supply a Rail ID. This entry does not import old Hub Work records automatically or resolve migration conflicts.
 
 ## Acceptance before closing the old connection
 
