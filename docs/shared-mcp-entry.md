@@ -13,7 +13,7 @@ Requested result: a separate Metropolis MCP connection for GO and LIGHT, with on
 
 ## Independent authentication and storage
 
-OAuth uses this Worker's own issuer, resource, signing key, owner passcode and two fixed clients. PKCE S256, exact redirect URI, audience, expiry, client/actor/scope binding, single-use authorization codes, rotated single-use refresh tokens and owner attempt limiting are enforced. No credential from the legacy Hub is accepted or copied.
+OAuth uses this Worker's own issuer, resource, signing key, owner passcode and one or two registered clients. PKCE S256, exact redirect URI, audience, expiry, client/actor/scope binding, single-use authorization codes, rotated single-use refresh tokens and owner attempt limiting are enforced. No credential from the legacy Hub is accepted or copied.
 
 `MetropolisEntry` is a SQLite Durable Object. Work records, used-token hashes and owner attempt counts survive gateway/Worker restarts. Whole entry operations are serialized so read/change/readback and token consumption cannot interleave. Scope comes from explicit owner-configured Work grants, never from an agent's payload. Empty grants permit arrival/refresh only.
 
@@ -28,7 +28,7 @@ Owner-controlled settings required before activation:
 | `MCP_PUBLIC_ORIGIN` | variable | Exact HTTPS origin returned by Cloudflare after creating this Worker; no trailing slash |
 | `MCP_OAUTH_SIGNING_KEY` | secret | New random signing secret, independent of legacy Hub |
 | `MCP_OWNER_PASSCODE` | secret | Owner's new authorization passcode |
-| `MCP_OAUTH_CLIENTS` | secret JSON | Two distinct clients for GO and LIGHT, each with its own client ID/secret and exact redirect URI observed from its client configuration |
+| `MCP_OAUTH_CLIENTS` | secret JSON | One or two distinct clients for GO and LIGHT, each with its own client ID/secret and exact redirect URI observed from its client configuration; GO can connect before LIGHT onboarding |
 | `MCP_WORK_GRANTS` | variable JSON | Explicit actor/action/Work grants; default `[]` |
 | `MCP_ALLOWED_ORIGINS` | variable JSON | Observed browser client origins if needed; default `[]` |
 | `METROPOLIS_ENTRY` | Durable Object binding | Created by the supplied Wrangler migration |
@@ -65,3 +65,23 @@ Intake grants additionally require `ownerSystem`; handoff grants additionally re
 Local tests and CI/bundle prove implementation properties only. Production deployment, OAuth in actual clients, old-room refresh and runtime Work readback remain UNKNOWN until those destination reads succeed.
 
 OAuth source lineage: adapted from `prytaneion-workspace/go-hub-oauth.mjs`, blob `c59f770264a9117b97c78d5c7633aa90b3c45939`; independent credentials, replay protection and identity binding added here.
+
+## Plugin connection
+
+Use the existing Cloudflare Streamable HTTP endpoint
+`https://metropolis.pureekangraw.workers.dev/mcp`. Preserve OAuth; do not put
+client secrets, owner passcodes or signing keys in plugin files. A plugin
+installation does not authenticate users or grant Work permissions.
+
+GO can be registered first with client ID `metropolis-go`, subject `GO`, scope
+`metropolis-go`, its own secret and the exact callback displayed by the host.
+Add LIGHT as a second separate client when its actual callback is known.
+Unregistered clients remain denied.
+
+The observed GO callback for the current setup is
+`https://chatgpt.com/connector/oauth/r0boAZdimpH6`; a new plugin connection may
+have a different callback, so read its actual configuration before reusing it.
+
+Backend releases at the same endpoint do not require changing the plugin's URL.
+Changes to plugin instructions require a plugin release. Tool-list caching in
+existing rooms and actual OAuth connection remain unverified until client tests.

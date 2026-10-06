@@ -43,6 +43,20 @@ test('health reports build identity without credentials', async () => {
   assert.equal(JSON.parse(raw).sourceSha, 'a'.repeat(40));
   assert.equal(raw.includes('test-only'), false);
 });
+test('one registered client can connect before LIGHT onboarding', async () => {
+  const goOnly = { ...env, MCP_OAUTH_CLIENTS: JSON.stringify(JSON.parse(env.MCP_OAUTH_CLIENTS).slice(0, 1)) };
+  const gateway = createGateway({ env: goOnly, storage: storage(), sourceSha: 'a'.repeat(40) });
+  assert.equal((await gateway.fetch(new Request(origin + '/health'))).status, 200);
+  assert.equal((await call(gateway, 'metropolis_arrive', {})).body.result.structuredContent.actor, 'GO');
+  assert.equal((await call(gateway, 'metropolis_arrive', {}, 'LIGHT')).response.status, 401);
+});
+test('empty clients and duplicate identities fail closed', async () => {
+  const clients = JSON.parse(env.MCP_OAUTH_CLIENTS);
+  for (const invalid of [[], [clients[0], clients[0]], { clientId: 'go' }]) {
+    const gateway = createGateway({ env: { ...env, MCP_OAUTH_CLIENTS: JSON.stringify(invalid) }, storage: storage(), sourceSha: 'a'.repeat(40) });
+    assert.equal((await gateway.fetch(new Request(origin + '/health'))).status, 503);
+  }
+});
 test('a GO subject cannot authenticate with the LIGHT client identity', async () => {
   const gateway = createGateway({ env, storage: storage(), sourceSha: 'a'.repeat(40) });
   const wrongClient = await createTestAccessToken({ issuer: origin, resource: origin + '/mcp', signingKey: env.MCP_OAUTH_SIGNING_KEY, subject: 'GO', scope: 'metropolis-go', clientId: 'light' });
