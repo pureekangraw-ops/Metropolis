@@ -24,11 +24,35 @@ export async function bufferRequest(request, { timeoutMs = 10000, maxBytes = 655
   finally { clearTimeout(timer); if (failed) reader.cancel().catch(() => {}); reader.releaseLock(); }
 }
 
+function registeredClientsFrom(env = {}) {
+  const sources = [env.MCP_OAUTH_CLIENTS_JSON, env.MCP_OAUTH_CLIENTS].filter(value => typeof value === 'string' && value.trim() !== '');
+  for (const raw of sources) {
+    let clients;
+    try { clients = JSON.parse(raw); } catch { continue; }
+    if (!Array.isArray(clients) || clients.length > 2) continue;
+    if (clients.length === 0) return [];
+    const uniqueSubjects = new Set(clients.map(c => c?.subject));
+    const uniqueClientIds = new Set(clients.map(c => c?.clientId));
+    const valid = uniqueSubjects.size === clients.length
+      && uniqueClientIds.size === clients.length
+      && clients.every(c => (
+        ['GO', 'LIGHT'].includes(c?.subject)
+        && c.scope === 'metropolis-' + c.subject.toLowerCase()
+        && c.clientId
+        && c.clientSecret
+        && Array.isArray(c.redirectUris)
+        && c.redirectUris.length > 0
+        && c.redirectUris.every(u => typeof u === 'string' && u.startsWith('https://'))
+      ));
+    if (valid) return clients;
+  }
+  return [];
+}
+
 function configFor(env, storage) {
   const issuer = env.MCP_PUBLIC_ORIGIN;
   if (!issuer || new URL(issuer).origin !== issuer || !issuer.startsWith('https://')) throw new Error('PUBLIC_ORIGIN_REQUIRED');
-  const clients = JSON.parse(env.MCP_OAUTH_CLIENTS || '[]');
-  if (!Array.isArray(clients) || clients.length > 2 || new Set(clients.map(c => c.subject)).size !== clients.length || new Set(clients.map(c => c.clientId)).size !== clients.length || clients.some(c => !['GO', 'LIGHT'].includes(c.subject) || c.scope !== 'metropolis-' + c.subject.toLowerCase() || !c.clientId || !c.clientSecret || !Array.isArray(c.redirectUris) || !c.redirectUris.length || c.redirectUris.some(u => !u.startsWith('https://')))) throw new Error('REGISTERED_CLIENTS_REQUIRED');
+  const clients = registeredClientsFrom(env);
   if (!env.MCP_OAUTH_SIGNING_KEY || !env.MCP_OWNER_PASSCODE || !storage?.transaction) throw new Error('OAUTH_STORAGE_REQUIRED');
   const ledger = {
     async consume(key, expiresAt) {

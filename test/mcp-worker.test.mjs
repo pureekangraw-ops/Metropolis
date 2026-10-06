@@ -103,13 +103,18 @@ test('one registered client can connect before LIGHT onboarding', async () => {
   assert.equal(denied.response.status, 401);
   assert.equal(denied.body.reason, 'AUTH_REQUIRED');
 });
-test('empty static clients allow CIMD while invalid static registration fails closed', async () => {
-  const noStatic = createGateway({ env: { ...env, MCP_OAUTH_CLIENTS: '[]' }, storage: storage(), sourceSha: 'a'.repeat(40) });
-  assert.equal((await noStatic.fetch(new Request(origin + '/health'))).status, 200);
-  const clients = JSON.parse(env.MCP_OAUTH_CLIENTS);
-  for (const invalid of [[clients[0], clients[0]], { clientId: 'go' }]) {
-    const gateway = createGateway({ env: { ...env, MCP_OAUTH_CLIENTS: JSON.stringify(invalid) }, storage: storage(), sourceSha: 'a'.repeat(40) });
-    assert.equal((await gateway.fetch(new Request(origin + '/health'))).status, 503);
+test('CIMD entry stays ready when optional static client configuration is empty or unusable', async () => {
+  const variants = [
+    { ...env, MCP_OAUTH_CLIENTS: '[]' },
+    { ...env, MCP_OAUTH_CLIENTS: '{not-json' },
+    { ...env, MCP_OAUTH_CLIENTS: JSON.stringify({ clientId: 'go' }) },
+    { ...env, MCP_OAUTH_CLIENTS: JSON.stringify([JSON.parse(env.MCP_OAUTH_CLIENTS)[0], JSON.parse(env.MCP_OAUTH_CLIENTS)[0]]) },
+  ];
+  for (const candidate of variants) {
+    const gateway = createGateway({ env: candidate, storage: storage(), sourceSha: 'a'.repeat(40) });
+    assert.equal((await gateway.fetch(new Request(origin + '/health'))).status, 200);
+    const metadata = await (await gateway.fetch(new Request(origin + '/.well-known/oauth-authorization-server'))).json();
+    assert.equal(metadata.client_id_metadata_document_supported, true);
   }
 });
 test('a GO subject cannot authenticate with the LIGHT client identity', async () => {
