@@ -1,9 +1,45 @@
 const ACTIONS = ['read', 'intake', 'handoff', 'return'];
 const PROTOCOLS = ['2025-03-26', '2025-06-18', '2025-11-25'];
 const string = { type: 'string', minLength: 1 };
+const oauthSecurity = Object.freeze([{ type: 'oauth2', scopes: [] }]);
+const profileOutputSchema = Object.freeze({
+  '$schema': 'https://json-schema.org/draft/2020-12/schema',
+  type: 'object',
+  properties: {
+    id: { type: 'string', minLength: 1, pattern: '\\S', description: 'Stable opaque Metropolis profile identifier.' },
+    name: { type: 'string', description: 'Authenticated Metropolis actor name.' },
+    nickname: { type: 'string', description: 'Human-readable connection label.' },
+  },
+  required: ['id'],
+  additionalProperties: false,
+});
 const tools = [
-  { name: 'metropolis_arrive', description: 'GO/LIGHT arrival station. Read current release, schema hash, schemas and authorized actions on every arrival or refresh. No Work or authority is created.', inputSchema: { type: 'object', properties: {}, additionalProperties: false }, annotations: { readOnlyHint: true } },
-  { name: 'metropolis_work', description: 'Use existing City Hall Work operations with authenticated identity and current schemaHash. Refresh at metropolis_arrive when SCHEMA_REFRESH_REQUIRED. Never self-declare actor or permissions.', inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ACTIONS }, workId: string, checkpointId: string, schemaHash: string, payload: { type: 'object' } }, required: ['action', 'workId', 'checkpointId', 'schemaHash'], additionalProperties: false }, annotations: { readOnlyHint: false, destructiveHint: false } },
+  {
+    name: 'metropolis_identity',
+    title: 'Metropolis identity',
+    description: 'Return the GO or LIGHT profile represented by the authenticated connection. Use this to distinguish multiple connected Metropolis accounts.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    outputSchema: profileOutputSchema,
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    securitySchemes: oauthSecurity,
+    _meta: { 'openai/profile': true },
+  },
+  {
+    name: 'metropolis_arrive',
+    title: 'Enter Metropolis',
+    description: 'GO/LIGHT arrival station. Read current release, schema hash, schemas and authorized actions on every arrival or refresh. No Work or authority is created.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    securitySchemes: oauthSecurity,
+  },
+  {
+    name: 'metropolis_work',
+    title: 'Use Metropolis Work',
+    description: 'Use existing City Hall Work operations with authenticated identity and current schemaHash. Refresh at metropolis_arrive when SCHEMA_REFRESH_REQUIRED. Never self-declare actor or permissions.',
+    inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ACTIONS }, workId: string, checkpointId: string, schemaHash: string, payload: { type: 'object' } }, required: ['action', 'workId', 'checkpointId', 'schemaHash'], additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    securitySchemes: oauthSecurity,
+  },
 ];
 const actionSchemas = {
   read: { type: 'object', properties: {}, additionalProperties: false },
@@ -21,7 +57,13 @@ function required(value, name) {
   if (typeof value !== 'string' || !value.trim()) throw new Error(name + '_REQUIRED');
   return value.trim();
 }
-function toolResult(data, isError = false) { return { content: [{ type: 'text', text: JSON.stringify(data) }], structuredContent: data, isError }; }
+function toolResult(data, isError = false, meta = null) {
+  return { content: [{ type: 'text', text: JSON.stringify(data) }], structuredContent: data, isError, ...(meta ? { _meta: meta } : {}) };
+}
+const PROFILE_IDS = Object.freeze({ GO: 'prf_7b65c803a1184c26', LIGHT: 'prf_d25e4e4fa31a42bc' });
+function authChallenge(url) {
+  return `Bearer resource_metadata="${url.origin}/.well-known/oauth-protected-resource/mcp", error="insufficient_scope", error_description="Link a GO or LIGHT Metropolis account to continue"`;
+}
 
 export function createMetropolisMcp({ runtime, authenticate, grants = [], sourceSha = 'UNKNOWN', version = '1.0.0', allowedOrigins = [] } = {}) {
   if (!runtime || typeof authenticate !== 'function') throw new Error('RUNTIME_AUTHENTICATOR_REQUIRED');
@@ -31,6 +73,10 @@ export function createMetropolisMcp({ runtime, authenticate, grants = [], source
   }
   async function call(name, args, actor) {
     const current = await manifest(actor);
+    if (name === 'metropolis_identity') {
+      const profile = { id: PROFILE_IDS[actor], name: actor, nickname: `${actor} — Metropolis` };
+      return toolResult(profile);
+    }
     if (name === 'metropolis_arrive') return toolResult(current);
     if (name !== 'metropolis_work') return toolResult({ reason: 'TOOL_NOT_FOUND' }, true);
     if (args.schemaHash !== current.schemaHash) return toolResult({ reason: 'SCHEMA_REFRESH_REQUIRED', current }, true);
@@ -75,27 +121,56 @@ export function createMetropolisMcp({ runtime, authenticate, grants = [], source
     if (url.pathname !== '/mcp') return json({ reason: 'ROUTE_NOT_FOUND' }, 404);
     const origin = request.headers.get('origin');
     if (origin && !allowedOrigins.includes(origin)) return json({ reason: 'ORIGIN_DENIED' }, 403);
-    let principal;
-    try { principal = await authenticate(request); } catch { /* fail closed */ }
-    if (!['GO', 'LIGHT'].includes(principal?.actor)) return json({ reason: 'AUTH_REQUIRED' }, 401, { 'www-authenticate': `Bearer resource_metadata="${url.origin}/.well-known/oauth-protected-resource/mcp"` });
     if (request.method !== 'POST') return json({ reason: 'METHOD_NOT_ALLOWED' }, 405, { allow: 'POST' });
     if (!request.headers.get('content-type')?.startsWith('application/json')) return json({ reason: 'CONTENT_TYPE_REQUIRED' }, 415);
     const accept = request.headers.get('accept') || '';
     if (!accept.includes('application/json') || !accept.includes('text/event-stream')) return json({ reason: 'ACCEPT_REQUIRED' }, 406);
     const protocol = request.headers.get('mcp-protocol-version');
     if (protocol && !PROTOCOLS.includes(protocol)) return json({ reason: 'PROTOCOL_NOT_SUPPORTED' }, 400);
+
     let body;
-    try { const raw = await request.text(); if (raw.length > 65536) return json({ reason: 'REQUEST_TOO_LARGE' }, 413); body = JSON.parse(raw); } catch { return json({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }, 400); }
-    if (!body || Array.isArray(body) || body.jsonrpc !== '2.0' || typeof body.method !== 'string') return json({ jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Invalid request' } }, 400);
-    if (!Object.hasOwn(body, 'id')) return body.method.startsWith('notifications/') ? new Response(null, { status: 202 }) : json({ reason: 'INVALID_NOTIFICATION' }, 400);
+    try {
+      const raw = await request.text();
+      if (raw.length > 65536) return json({ reason: 'REQUEST_TOO_LARGE' }, 413);
+      body = JSON.parse(raw);
+    } catch {
+      return json({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }, 400);
+    }
+    if (!body || Array.isArray(body) || body.jsonrpc !== '2.0' || typeof body.method !== 'string') {
+      return json({ jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Invalid request' } }, 400);
+    }
+    if (!Object.hasOwn(body, 'id')) {
+      return body.method.startsWith('notifications/') ? new Response(null, { status: 202 }) : json({ reason: 'INVALID_NOTIFICATION' }, 400);
+    }
+
     const reply = result => json({ jsonrpc: '2.0', id: body.id, result });
     if (body.method === 'initialize') {
-      if (!PROTOCOLS.includes(body.params?.protocolVersion)) return json({ jsonrpc: '2.0', id: body.id, error: { code: -32602, message: 'Unsupported protocol version' } }, 400);
-      return reply({ protocolVersion: body.params.protocolVersion, capabilities: { tools: { listChanged: false } }, serverInfo: { name: 'metropolis', version }, instructions: 'Call metropolis_arrive on entry/resume to read CURRENT version and schemas. Use the returned schemaHash on every Work call. GO and LIGHT share this endpoint; authentication determines actor.' });
+      if (!PROTOCOLS.includes(body.params?.protocolVersion)) {
+        return json({ jsonrpc: '2.0', id: body.id, error: { code: -32602, message: 'Unsupported protocol version' } }, 400);
+      }
+      return reply({
+        protocolVersion: body.params.protocolVersion,
+        capabilities: { tools: { listChanged: false } },
+        serverInfo: { name: 'metropolis', version },
+        instructions: 'List tools without authentication, then link a GO or LIGHT Metropolis account. Call metropolis_arrive on entry/resume to read CURRENT version and schemas. Use the returned schemaHash on every Work call.',
+      });
     }
     if (body.method === 'ping') return reply({});
     if (body.method === 'tools/list') return reply({ tools });
-    if (body.method === 'tools/call') return reply(await call(body.params?.name, body.params?.arguments || {}, principal.actor));
+
+    if (body.method === 'tools/call') {
+      let principal;
+      try { principal = await authenticate(request); } catch { /* tool-level auth challenge below */ }
+      if (!['GO', 'LIGHT'].includes(principal?.actor)) {
+        return reply(toolResult(
+          { reason: 'AUTH_REQUIRED' },
+          true,
+          { 'mcp/www_authenticate': [authChallenge(url)] },
+        ));
+      }
+      return reply(await call(body.params?.name, body.params?.arguments || {}, principal.actor));
+    }
+
     return json({ jsonrpc: '2.0', id: body.id, error: { code: -32601, message: 'Method not found' } });
   } });
 }

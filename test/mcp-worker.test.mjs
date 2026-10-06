@@ -27,8 +27,15 @@ test('shared gateway verifies LIGHT scope and rejects legacy issuer', async () =
   const gateway = createGateway({ env, storage: storage(), sourceSha: 'a'.repeat(40) });
   assert.equal((await call(gateway, 'metropolis_arrive', {}, 'LIGHT')).body.result.structuredContent.actor, 'LIGHT');
   const old = await createTestAccessToken({ issuer: 'https://old.example', resource: origin + '/mcp', signingKey: env.MCP_OAUTH_SIGNING_KEY, subject: 'GO', scope: 'metropolis-go' });
-  const response = await gateway.fetch(new Request(origin + '/mcp', { method: 'POST', headers: { authorization: 'Bearer ' + old } }));
-  assert.equal(response.status, 401);
+  const response = await gateway.fetch(new Request(origin + '/mcp', {
+    method: 'POST',
+    headers: { authorization: 'Bearer ' + old, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'metropolis_arrive', arguments: {} } }),
+  }));
+  assert.equal(response.status, 200);
+  const denied = await response.json();
+  assert.equal(denied.result.structuredContent.reason, 'AUTH_REQUIRED');
+  assert.ok(denied.result._meta['mcp/www_authenticate']);
 });
 test('missing configuration and unknown source never advertise READY', async () => {
   const bad = createGateway({ env: {}, storage: storage(), sourceSha: 'UNKNOWN' });
@@ -48,7 +55,9 @@ test('one registered client can connect before LIGHT onboarding', async () => {
   const gateway = createGateway({ env: goOnly, storage: storage(), sourceSha: 'a'.repeat(40) });
   assert.equal((await gateway.fetch(new Request(origin + '/health'))).status, 200);
   assert.equal((await call(gateway, 'metropolis_arrive', {})).body.result.structuredContent.actor, 'GO');
-  assert.equal((await call(gateway, 'metropolis_arrive', {}, 'LIGHT')).response.status, 401);
+  const denied = await call(gateway, 'metropolis_arrive', {}, 'LIGHT');
+  assert.equal(denied.response.status, 200);
+  assert.equal(denied.body.result.structuredContent.reason, 'AUTH_REQUIRED');
 });
 test('empty static clients allow CIMD while invalid static registration fails closed', async () => {
   const noStatic = createGateway({ env: { ...env, MCP_OAUTH_CLIENTS: '[]' }, storage: storage(), sourceSha: 'a'.repeat(40) });
@@ -62,8 +71,14 @@ test('empty static clients allow CIMD while invalid static registration fails cl
 test('a GO subject cannot authenticate with the LIGHT client identity', async () => {
   const gateway = createGateway({ env, storage: storage(), sourceSha: 'a'.repeat(40) });
   const wrongClient = await createTestAccessToken({ issuer: origin, resource: origin + '/mcp', signingKey: env.MCP_OAUTH_SIGNING_KEY, subject: 'GO', scope: 'metropolis-go', clientId: 'light' });
-  const response = await gateway.fetch(new Request(origin + '/mcp', { method: 'POST', headers: { authorization: 'Bearer ' + wrongClient } }));
-  assert.equal(response.status, 401);
+  const response = await gateway.fetch(new Request(origin + '/mcp', {
+    method: 'POST',
+    headers: { authorization: 'Bearer ' + wrongClient, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'metropolis_arrive', arguments: {} } }),
+  }));
+  assert.equal(response.status, 200);
+  const denied = await response.json();
+  assert.equal(denied.result.structuredContent.reason, 'AUTH_REQUIRED');
 });
 test('slow and oversized public bodies stop before the durable entry gate', async () => {
   const slow = new Request(origin + '/oauth/authorize', { method: 'POST', body: new ReadableStream({ start() {} }), duplex: 'half' });
