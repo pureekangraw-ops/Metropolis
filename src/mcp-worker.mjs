@@ -28,7 +28,7 @@ function configFor(env, storage) {
   const issuer = env.MCP_PUBLIC_ORIGIN;
   if (!issuer || new URL(issuer).origin !== issuer || !issuer.startsWith('https://')) throw new Error('PUBLIC_ORIGIN_REQUIRED');
   const clients = JSON.parse(env.MCP_OAUTH_CLIENTS || '[]');
-  if (!Array.isArray(clients) || clients.length < 1 || clients.length > 2 || new Set(clients.map(c => c.subject)).size !== clients.length || new Set(clients.map(c => c.clientId)).size !== clients.length || clients.some(c => !['GO', 'LIGHT'].includes(c.subject) || c.scope !== 'metropolis-' + c.subject.toLowerCase() || !c.clientId || !c.clientSecret || !Array.isArray(c.redirectUris) || !c.redirectUris.length || c.redirectUris.some(u => !u.startsWith('https://')))) throw new Error('REGISTERED_CLIENTS_REQUIRED');
+  if (!Array.isArray(clients) || clients.length > 2 || new Set(clients.map(c => c.subject)).size !== clients.length || new Set(clients.map(c => c.clientId)).size !== clients.length || clients.some(c => !['GO', 'LIGHT'].includes(c.subject) || c.scope !== 'metropolis-' + c.subject.toLowerCase() || !c.clientId || !c.clientSecret || !Array.isArray(c.redirectUris) || !c.redirectUris.length || c.redirectUris.some(u => !u.startsWith('https://')))) throw new Error('REGISTERED_CLIENTS_REQUIRED');
   if (!env.MCP_OAUTH_SIGNING_KEY || !env.MCP_OWNER_PASSCODE || !storage?.transaction) throw new Error('OAUTH_STORAGE_REQUIRED');
   const ledger = {
     async consume(key, expiresAt) {
@@ -37,7 +37,7 @@ function configFor(env, storage) {
     async blocked(key, now) { return (await storage.get('oauth:attempt:' + key) || []).filter(t => now - t < 900).length >= 5; },
     async failure(key, now) { const id = 'oauth:attempt:' + key; const previous = await storage.get(id) || []; await storage.put(id, [...previous.filter(t => now - t < 900), now]); },
   };
-  return { issuer, resource: issuer + '/mcp', signingKey: env.MCP_OAUTH_SIGNING_KEY, ownerPasscode: env.MCP_OWNER_PASSCODE, clients: clients.map(c => ({ ...c, resources: [issuer + '/mcp'] })), ledger };
+  return { issuer, resource: issuer + '/mcp', signingKey: env.MCP_OAUTH_SIGNING_KEY, ownerPasscode: env.MCP_OWNER_PASSCODE, clients: clients.map(c => ({ ...c, resources: [issuer + '/mcp'] })), allowCimd: true, ledger };
 }
 
 export function createGateway({ env, storage, sourceSha = SOURCE_SHA } = {}) {
