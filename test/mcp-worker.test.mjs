@@ -50,9 +50,11 @@ test('one registered client can connect before LIGHT onboarding', async () => {
   assert.equal((await call(gateway, 'metropolis_arrive', {})).body.result.structuredContent.actor, 'GO');
   assert.equal((await call(gateway, 'metropolis_arrive', {}, 'LIGHT')).response.status, 401);
 });
-test('empty clients and duplicate identities fail closed', async () => {
+test('empty static clients allow CIMD while invalid static registration fails closed', async () => {
+  const noStatic = createGateway({ env: { ...env, MCP_OAUTH_CLIENTS: '[]' }, storage: storage(), sourceSha: 'a'.repeat(40) });
+  assert.equal((await noStatic.fetch(new Request(origin + '/health'))).status, 200);
   const clients = JSON.parse(env.MCP_OAUTH_CLIENTS);
-  for (const invalid of [[], [clients[0], clients[0]], { clientId: 'go' }]) {
+  for (const invalid of [[clients[0], clients[0]], { clientId: 'go' }]) {
     const gateway = createGateway({ env: { ...env, MCP_OAUTH_CLIENTS: JSON.stringify(invalid) }, storage: storage(), sourceSha: 'a'.repeat(40) });
     assert.equal((await gateway.fetch(new Request(origin + '/health'))).status, 503);
   }

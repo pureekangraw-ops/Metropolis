@@ -1,41 +1,40 @@
-// Derived from prytaneion-workspace/go-hub-oauth.mjs blob c59f770264a9117b97c78d5c7633aa90b3c45939.
-// Independent Metropolis issuer; credentials and grants are never shared with the legacy Hub.
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 const ACCESS_TOKEN_TTL_SECONDS = 3600;
 const REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60;
+const ACTOR_SCOPES = Object.freeze({ GO: 'metropolis-go', LIGHT: 'metropolis-light' });
 
 function json(payload, status = 200, headers = {}) {
   return new Response(JSON.stringify(payload), {
     status,
-    headers: { "content-type": "application/json; charset=utf-8", ...headers },
+    headers: { 'content-type': 'application/json; charset=utf-8', ...headers },
   });
 }
 
 function base64url(bytes) {
-  const value = typeof bytes === "string" ? encoder.encode(bytes) : bytes;
-  let binary = "";
+  const value = typeof bytes === 'string' ? encoder.encode(bytes) : bytes;
+  let binary = '';
   for (const byte of value) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
 }
 
 function fromBase64url(value) {
-  const normalized = String(value).replace(/-/g, "+").replace(/_/g, "/");
-  const padded = normalized + "=".repeat((4 - normalized.length % 4) % 4);
+  const normalized = String(value).replace(/-/g, '+').replace(/_/g, '/');
+  const padded = normalized + '='.repeat((4 - normalized.length % 4) % 4);
   const binary = atob(padded);
   return Uint8Array.from(binary, character => character.charCodeAt(0));
 }
 
 async function hmac(value, secret) {
   const key = await crypto.subtle.importKey(
-    "raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"],
+    'raw', encoder.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'],
   );
-  return new Uint8Array(await crypto.subtle.sign("HMAC", key, encoder.encode(value)));
+  return new Uint8Array(await crypto.subtle.sign('HMAC', key, encoder.encode(value)));
 }
 
 function timingSafeEqual(left, right) {
-  const a = typeof left === "string" ? encoder.encode(left) : left;
-  const b = typeof right === "string" ? encoder.encode(right) : right;
+  const a = typeof left === 'string' ? encoder.encode(left) : left;
+  const b = typeof right === 'string' ? encoder.encode(right) : right;
   let difference = a.length ^ b.length;
   const length = Math.max(a.length, b.length);
   for (let index = 0; index < length; index += 1) {
@@ -46,31 +45,31 @@ function timingSafeEqual(left, right) {
 
 async function signEnvelope(payload, signingKey) {
   const body = base64url(JSON.stringify(payload));
-  return body + "." + base64url(await hmac(body, signingKey));
+  return body + '.' + base64url(await hmac(body, signingKey));
 }
 
 async function verifyEnvelope(value, signingKey) {
-  const [body, signature, extra] = String(value || "").split(".");
-  if (!body || !signature || extra) throw new Error("invalid signed envelope");
+  const [body, signature, extra] = String(value || '').split('.');
+  if (!body || !signature || extra) throw new Error('invalid signed envelope');
   const expected = await hmac(body, signingKey);
-  if (!timingSafeEqual(fromBase64url(signature), expected)) throw new Error("invalid signed envelope");
+  if (!timingSafeEqual(fromBase64url(signature), expected)) throw new Error('invalid signed envelope');
   return JSON.parse(decoder.decode(fromBase64url(body)));
 }
 
 async function sha256Base64url(value) {
-  return base64url(new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(value))));
+  return base64url(new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(value))));
 }
 
 async function sha256Hex(value) {
-  const bytes = new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(value)));
-  return [...bytes].map(byte => byte.toString(16).padStart(2, "0")).join("");
+  const bytes = new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(value)));
+  return [...bytes].map(byte => byte.toString(16).padStart(2, '0')).join('');
 }
 
 function allowedRedirectUris(config) {
   return [...new Set([
     config.redirectUri,
     ...(Array.isArray(config.redirectUris) ? config.redirectUris : []),
-  ].map(value => String(value || "").trim()).filter(Boolean))];
+  ].map(value => String(value || '').trim()).filter(Boolean))];
 }
 
 function oauthClients(config) {
@@ -79,28 +78,90 @@ function oauthClients(config) {
     clientId: config.clientId,
     clientSecret: config.clientSecret,
     redirectUris: allowedRedirectUris(config),
-    subject: config.subject || "big",
-    scope: config.scope || "go-hub",
+    subject: config.subject || 'big',
+    scope: config.scope || 'go-hub',
   }];
   return clients.map(client => ({
-    clientId: String(client?.clientId || "").trim(),
-    clientSecret: String(client?.clientSecret || ""),
+    clientId: String(client?.clientId || '').trim(),
+    clientSecret: String(client?.clientSecret || ''),
     redirectUris: [...new Set((Array.isArray(client?.redirectUris) ? client.redirectUris : [])
-      .map(value => String(value || "").trim()).filter(Boolean))],
+      .map(value => String(value || '').trim()).filter(Boolean))],
     resources: [...new Set((Array.isArray(client?.resources) ? client.resources : [])
-      .map(value => String(value || "").trim()).filter(Boolean))],
-    subject: String(client?.subject || "big"),
-    scope: String(client?.scope || "go-hub"),
+      .map(value => String(value || '').trim()).filter(Boolean))],
+    subject: String(client?.subject || 'big'),
+    scope: String(client?.scope || 'go-hub'),
+    kind: 'REGISTERED',
+    tokenEndpointAuthMethod: 'client_secret_basic',
   })).filter(client => client.clientId && client.clientSecret && client.redirectUris.length);
 }
 
 function clientById(config, clientId) {
-  return oauthClients(config).find(client => client.clientId === String(clientId || ""));
+  return oauthClients(config).find(client => client.clientId === String(clientId || ''));
+}
+
+function actorIdentity(actor) {
+  const subject = String(actor || '').trim().toUpperCase();
+  const scope = ACTOR_SCOPES[subject];
+  return scope ? { subject, scope } : null;
+}
+
+function identityFromRequestedScope(scope) {
+  const requested = new Set(String(scope || '').split(/\s+/).map(value => value.trim()).filter(Boolean));
+  const matches = Object.entries(ACTOR_SCOPES).filter(([, actorScope]) => requested.has(actorScope));
+  return matches.length === 1 ? { subject: matches[0][0], scope: matches[0][1] } : null;
+}
+
+function validCimdClientId(value) {
+  try {
+    const url = new URL(String(value || ''));
+    if (url.protocol !== 'https:' || url.hostname !== 'chatgpt.com' || url.username || url.password || url.search || url.hash) return false;
+    return /^\/oauth\/(?:client\.json|[^/]+\/client\.json)$/.test(url.pathname);
+  } catch {
+    return false;
+  }
+}
+
+async function resolveCimdClient(config, clientId) {
+  if (config.allowCimd !== true || !validCimdClientId(clientId)) return null;
+  const fetchImpl = config.fetchImpl || fetch;
+  let response;
+  try {
+    response = await fetchImpl(clientId, { headers: { accept: 'application/json' }, redirect: 'error' });
+  } catch {
+    return null;
+  }
+  if (!response?.ok) return null;
+  let metadata;
+  try { metadata = await response.json(); } catch { return null; }
+  const redirectUris = Array.isArray(metadata?.redirect_uris)
+    ? [...new Set(metadata.redirect_uris.map(value => String(value || '').trim()).filter(Boolean))]
+    : [];
+  const methods = Array.isArray(metadata?.token_endpoint_auth_methods_supported)
+    ? metadata.token_endpoint_auth_methods_supported
+    : [metadata?.token_endpoint_auth_method].filter(Boolean);
+  const grants = Array.isArray(metadata?.grant_types) ? metadata.grant_types : [];
+  const responses = Array.isArray(metadata?.response_types) ? metadata.response_types : [];
+  if (metadata?.client_id !== clientId || !redirectUris.length || !methods.includes('none') || !grants.includes('authorization_code') || !responses.includes('code')) return null;
+  return {
+    clientId,
+    clientSecret: '',
+    redirectUris,
+    resources: [defaultResource(config)],
+    subject: null,
+    scope: null,
+    kind: 'CIMD',
+    tokenEndpointAuthMethod: 'none',
+  };
+}
+
+async function resolveClient(config, clientId) {
+  return clientById(config, clientId) || await resolveCimdClient(config, clientId);
 }
 
 function configured(config) {
   return Boolean(
-    config.issuer && config.signingKey && config.ownerPasscode && oauthClients(config).length &&
+    config.issuer && config.signingKey && config.ownerPasscode &&
+    (oauthClients(config).length || config.allowCimd === true) &&
     config.ledger?.consume && config.ledger?.blocked && config.ledger?.failure,
   );
 }
@@ -117,7 +178,7 @@ function refreshTokenTtlSeconds(config) {
 }
 
 function defaultResource(config) {
-  return String(config.resource || (config.issuer + "/mcp"));
+  return String(config.resource || (config.issuer + '/mcp'));
 }
 
 function allowedClientResources(config, client) {
@@ -127,8 +188,8 @@ function allowedClientResources(config, client) {
 
 function resolveClientResource(config, client, value) {
   const fallback = defaultResource(config);
-  const resource = String(value || "").trim() || fallback;
-  if (!allowedClientResources(config, client).includes(resource)) throw new Error("invalid resource");
+  const resource = String(value || '').trim() || fallback;
+  if (!allowedClientResources(config, client).includes(resource)) throw new Error('invalid resource');
   return resource;
 }
 
@@ -136,37 +197,52 @@ function protectedResourceForMetadata(config, _path) {
   return defaultResource(config);
 }
 
-function validateAuthorize(input, config) {
-  if (input.get("response_type") !== "code") throw new Error("unsupported response type");
-  const client = clientById(config, input.get("client_id"));
-  if (!client) throw new Error("invalid client");
-  const redirectUri = String(input.get("redirect_uri") || "");
-  if (!client.redirectUris.includes(redirectUri)) throw new Error("invalid redirect uri");
-  if (input.get("code_challenge_method") !== "S256") throw new Error("S256 PKCE is required");
-  const challenge = String(input.get("code_challenge") || "");
-  if (!/^[A-Za-z0-9_-]{43,128}$/.test(challenge)) throw new Error("invalid code challenge");
-  const resource = resolveClientResource(config, client, input.get("resource"));
+function clientAllowsIdentity(client, subject, scope) {
+  if (client?.kind === 'CIMD') return actorIdentity(subject)?.scope === scope;
+  return client?.subject === subject && client?.scope === scope;
+}
+
+async function validateAuthorize(input, config) {
+  if (input.get('response_type') !== 'code') throw new Error('unsupported response type');
+  const client = await resolveClient(config, input.get('client_id'));
+  if (!client) throw new Error('invalid client');
+  const redirectUri = String(input.get('redirect_uri') || '');
+  if (!client.redirectUris.includes(redirectUri)) throw new Error('invalid redirect uri');
+  if (input.get('code_challenge_method') !== 'S256') throw new Error('S256 PKCE is required');
+  const challenge = String(input.get('code_challenge') || '');
+  if (!/^[A-Za-z0-9_-]{43,128}$/.test(challenge)) throw new Error('invalid code challenge');
+  const resource = resolveClientResource(config, client, input.get('resource'));
+  const requestedScope = String(input.get('scope') || '');
+  const fixedIdentity = client.kind === 'REGISTERED'
+    ? { subject: client.subject, scope: client.scope }
+    : identityFromRequestedScope(requestedScope);
+  if (client.kind === 'REGISTERED') {
+    const requestedActor = identityFromRequestedScope(requestedScope);
+    if (requestedActor && requestedActor.subject !== client.subject) throw new Error('scope identity mismatch');
+  }
   return {
     client,
-    state: String(input.get("state") || ""),
+    state: String(input.get('state') || ''),
     redirectUri,
     codeChallenge: challenge,
     resource,
+    requestedScope,
+    fixedIdentity,
   };
 }
 
 export async function createTestAuthorizationCode(config = {}) {
   const issuedAt = nowSeconds(config);
   return signEnvelope({
-    type: "code",
+    type: 'code',
     jti: crypto.randomUUID(),
     iss: config.issuer,
     aud: config.clientId,
-    sub: config.subject || "big",
+    sub: config.subject || 'big',
     redirect_uri: config.redirectUri,
     code_challenge: config.codeChallenge,
-    resource: config.resource || config.issuer + "/mcp",
-    scope: config.scope || "go-hub",
+    resource: config.resource || config.issuer + '/mcp',
+    scope: config.scope || 'go-hub',
     iat: issuedAt,
     exp: config.expiresAt ?? issuedAt + 300,
   }, config.signingKey);
@@ -178,12 +254,12 @@ export async function createAccessToken(config = {}) {
     ? Math.max(60, Number(config.ttlSeconds))
     : ACCESS_TOKEN_TTL_SECONDS;
   return signEnvelope({
-    type: "access",
+    type: 'access',
     iss: config.issuer,
-    aud: config.resource || config.issuer + "/mcp",
+    aud: config.resource || config.issuer + '/mcp',
     ...(config.clientId ? { client_id: String(config.clientId) } : {}),
-    sub: config.subject || "big",
-    scope: config.scope || "go-hub",
+    sub: config.subject || 'big',
+    scope: config.scope || 'go-hub',
     iat: issuedAt,
     exp: config.expiresAt ?? issuedAt + ttlSeconds,
   }, config.signingKey);
@@ -196,99 +272,128 @@ export async function createTestAccessToken(config = {}) {
 export async function createTestRefreshToken(config = {}) {
   const issuedAt = nowSeconds(config);
   return signEnvelope({
-    type: "refresh",
+    type: 'refresh',
     jti: crypto.randomUUID(),
     iss: config.issuer,
     aud: config.clientId,
-    sub: config.subject || "big",
-    resource: config.resource || config.issuer + "/mcp",
-    scope: config.scope || "go-hub",
+    sub: config.subject || 'big',
+    resource: config.resource || config.issuer + '/mcp',
+    scope: config.scope || 'go-hub',
     iat: issuedAt,
     exp: config.expiresAt ?? issuedAt + refreshTokenTtlSeconds(config),
   }, config.signingKey);
 }
 
 export async function verifyAccessToken(request, config = {}) {
-  if (!config.issuer || !config.signingKey) throw new Error("OAuth is not configured");
-  const authorization = String(request.headers.get("authorization") || "");
-  if (!authorization.startsWith("Bearer ")) throw new Error("missing bearer token");
+  if (!config.issuer || !config.signingKey) throw new Error('OAuth is not configured');
+  const authorization = String(request.headers.get('authorization') || '');
+  if (!authorization.startsWith('Bearer ')) throw new Error('missing bearer token');
   const payload = await verifyEnvelope(authorization.slice(7), config.signingKey);
-  const expectedResource = config.resource || config.issuer + "/mcp";
-  const acceptedIdentities = Array.isArray(config.acceptedIdentities) && config.acceptedIdentities.length
-    ? config.acceptedIdentities.map(identity =>
-        String(identity?.subject || "") + "\u0000" + String(identity?.scope || ""))
-    : Array.isArray(config.clients) && config.clients.length
-      ? oauthClients(config).map(client => client.subject + "\u0000" + client.scope)
-      : [(config.subject || "big") + "\u0000" + (config.scope || "go-hub")];
-  const expectedClientId = String(config.clientId || "").trim();
-  const acceptedClientIds = new Set([
-    expectedClientId,
-    ...(Array.isArray(config.acceptedClientIds) ? config.acceptedClientIds : []),
-  ].map(value => String(value || "").trim()).filter(Boolean));
-  if (payload.type !== "access" || payload.iss !== config.issuer || payload.aud !== expectedResource ||
-      !acceptedIdentities.includes(String(payload.sub) + "\u0000" + String(payload.scope)) ||
-      (config.requireClientId === true && (!acceptedClientIds.size ||
-        (payload.client_id == null && config.allowLegacyClientId !== true) ||
-        (payload.client_id != null && !acceptedClientIds.has(String(payload.client_id)))))) {
-    throw new Error("invalid access token");
+  const expectedResource = config.resource || config.issuer + '/mcp';
+  const current = nowSeconds(config);
+  if (payload.type !== 'access' || payload.iss !== config.issuer || payload.aud !== expectedResource || !Number.isFinite(payload.exp) || payload.exp <= current) {
+    throw new Error('invalid access token');
   }
-  if (!Number.isFinite(payload.exp) || payload.exp <= nowSeconds(config)) throw new Error("expired access token");
-  if (config.requireClientId === true && Array.isArray(config.clients)) {
-    const client = oauthClients(config).find(client => client.clientId === payload.client_id);
-    if (!client || client.subject !== payload.sub || client.scope !== payload.scope) throw new Error("client identity mismatch");
+  const clientId = String(payload.client_id || '').trim();
+  if (config.requireClientId === true && !clientId) throw new Error('invalid access token');
+  const registered = oauthClients(config).find(client => client.clientId === clientId);
+  const cimdAllowed = config.allowCimd === true && validCimdClientId(clientId) && actorIdentity(payload.sub)?.scope === payload.scope;
+  if (registered) {
+    if (!clientAllowsIdentity(registered, payload.sub, payload.scope)) throw new Error('client identity mismatch');
+  } else if (!cimdAllowed) {
+    const acceptedClientIds = new Set([
+      String(config.clientId || '').trim(),
+      ...(Array.isArray(config.acceptedClientIds) ? config.acceptedClientIds : []),
+    ].map(value => String(value || '').trim()).filter(Boolean));
+    const acceptedIdentities = Array.isArray(config.acceptedIdentities) && config.acceptedIdentities.length
+      ? config.acceptedIdentities.map(identity => String(identity?.subject || '') + '\u0000' + String(identity?.scope || ''))
+      : [];
+    if (!acceptedClientIds.has(clientId) || (acceptedIdentities.length && !acceptedIdentities.includes(String(payload.sub) + '\u0000' + String(payload.scope)))) {
+      throw new Error('invalid access token');
+    }
   }
   return { subject: payload.sub, scope: payload.scope };
 }
 
+function scopesForMetadata(config) {
+  const scopes = new Set(oauthClients(config).map(client => client.scope));
+  if (config.allowCimd === true) Object.values(ACTOR_SCOPES).forEach(scope => scopes.add(scope));
+  return [...scopes];
+}
+
 function metadata(config, path) {
-  if (path === "/.well-known/oauth-authorization-server") {
+  if (path === '/.well-known/oauth-authorization-server') {
+    const methods = [];
+    if (config.allowCimd === true) methods.push('none');
+    if (oauthClients(config).length) methods.push('client_secret_basic');
     return json({
       issuer: config.issuer,
-      authorization_endpoint: config.issuer + "/oauth/authorize",
-      token_endpoint: config.issuer + "/oauth/token",
-      response_types_supported: ["code"],
-      grant_types_supported: ["authorization_code", "refresh_token"],
-      code_challenge_methods_supported: ["S256"],
-      token_endpoint_auth_methods_supported: ["client_secret_basic"],
+      authorization_endpoint: config.issuer + '/oauth/authorize',
+      token_endpoint: config.issuer + '/oauth/token',
+      client_id_metadata_document_supported: config.allowCimd === true,
+      response_types_supported: ['code'],
+      grant_types_supported: ['authorization_code', 'refresh_token'],
+      code_challenge_methods_supported: ['S256'],
+      token_endpoint_auth_methods_supported: methods,
       authorization_response_iss_parameter_supported: true,
+      scopes_supported: scopesForMetadata(config),
     });
   }
   const resource = protectedResourceForMetadata(config, path);
   return json({
     resource,
     authorization_servers: [config.issuer],
-    scopes_supported: [...new Set(oauthClients(config).map(client => client.scope))],
-    bearer_methods_supported: ["header"],
+    scopes_supported: scopesForMetadata(config),
+    bearer_methods_supported: ['header'],
   });
 }
 
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, character => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  })[character]);
+}
+
 function authorizePage(values) {
-  const hidden = Object.entries(values).map(([name, value]) =>
-    `<input type="hidden" name="${name}" value="${String(value).replace(/[&<>"']/g, character => ({
-      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
-    })[character])}">`
-  ).join("");
-  return new Response(`<!doctype html><html><meta name="viewport" content="width=device-width"><title>Metropolis authorization</title><body><main><h1>Metropolis</h1><p>Authorize this Metropolis connection.</p><form method="post">${hidden}<label>Owner passcode <input name="passcode" type="password" autocomplete="current-password" required></label><button type="submit">Authorize</button></form></main></body></html>`, {
-    headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+  const hidden = Object.entries(values.hidden).map(([name, value]) =>
+    `<input type="hidden" name="${escapeHtml(name)}" value="${escapeHtml(value)}">`
+  ).join('');
+  const identity = values.fixedIdentity
+    ? `<input type="hidden" name="actor" value="${escapeHtml(values.fixedIdentity.subject)}"><p>Enter as <strong>${escapeHtml(values.fixedIdentity.subject)}</strong></p>`
+    : '<label>Enter as <select name="actor" required><option value="GO">GO</option><option value="LIGHT">LIGHT</option></select></label>';
+  return new Response(`<!doctype html><html><meta name="viewport" content="width=device-width"><title>Metropolis authorization</title><body><main><h1>Metropolis</h1><p>Authorize this Metropolis connection.</p><form method="post">${hidden}${identity}<label>Owner passcode <input name="passcode" type="password" autocomplete="current-password" required></label><button type="submit">Authorize</button></form></main></body></html>`, {
+    headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' },
   });
 }
 
 function readBasic(request) {
-  const header = String(request.headers.get("authorization") || "");
-  if (!header.startsWith("Basic ")) return null;
+  const header = String(request.headers.get('authorization') || '');
+  if (!header.startsWith('Basic ')) return null;
   try {
     const decoded = atob(header.slice(6));
-    const separator = decoded.indexOf(":");
+    const separator = decoded.indexOf(':');
     return separator < 0 ? null : [decoded.slice(0, separator), decoded.slice(separator + 1)];
   } catch {
     return null;
   }
 }
 
+async function clientFromTokenRequest(request, form, config) {
+  const credentials = readBasic(request);
+  if (credentials) {
+    const client = clientById(config, credentials[0]);
+    if (!client || !timingSafeEqual(credentials[1], client.clientSecret)) return null;
+    return client;
+  }
+  const clientId = String(form.get('client_id') || '');
+  const client = await resolveClient(config, clientId);
+  return client?.kind === 'CIMD' && client.tokenEndpointAuthMethod === 'none' ? client : null;
+}
+
 function validRefreshToken(payload, config, client, resource, current) {
   return Boolean(
-    payload && payload.type === "refresh" && payload.iss === config.issuer &&
-    payload.aud === client.clientId && payload.sub === client.subject && payload.scope === client.scope &&
+    payload && payload.type === 'refresh' && payload.iss === config.issuer &&
+    payload.aud === client.clientId && clientAllowsIdentity(client, payload.sub, payload.scope) &&
     payload.resource === resource && Number.isFinite(payload.exp) && payload.exp > current,
   );
 }
@@ -296,133 +401,124 @@ function validRefreshToken(payload, config, client, resource, current) {
 export function createOAuthHandler(config = {}) {
   return async function handleOAuth(request) {
     const url = new URL(request.url);
-    if (!configured(config)) return json({ code: "OAUTH_NOT_CONFIGURED" }, 503);
+    if (!configured(config)) return json({ code: 'OAUTH_NOT_CONFIGURED' }, 503);
 
-    if (request.method === "GET" && [
-      "/.well-known/oauth-authorization-server",
-      "/.well-known/oauth-protected-resource",
-      "/.well-known/oauth-protected-resource/mcp",
+    if (request.method === 'GET' && [
+      '/.well-known/oauth-authorization-server',
+      '/.well-known/oauth-protected-resource',
+      '/.well-known/oauth-protected-resource/mcp',
     ].includes(url.pathname)) return metadata(config, url.pathname);
 
     try {
-      if (url.pathname === "/oauth/authorize" && request.method === "GET") {
-        const values = validateAuthorize(url.searchParams, config);
+      if (url.pathname === '/oauth/authorize' && request.method === 'GET') {
+        const values = await validateAuthorize(url.searchParams, config);
         return authorizePage({
-          response_type: "code",
-          client_id: values.client.clientId,
-          redirect_uri: values.redirectUri,
-          code_challenge: values.codeChallenge,
-          code_challenge_method: "S256",
-          state: values.state,
-          resource: values.resource,
+          hidden: {
+            response_type: 'code',
+            client_id: values.client.clientId,
+            redirect_uri: values.redirectUri,
+            code_challenge: values.codeChallenge,
+            code_challenge_method: 'S256',
+            state: values.state,
+            resource: values.resource,
+            scope: values.requestedScope,
+          },
+          fixedIdentity: values.fixedIdentity,
         });
       }
 
-      if (url.pathname === "/oauth/authorize" && request.method === "POST") {
+      if (url.pathname === '/oauth/authorize' && request.method === 'POST') {
         const form = await request.formData();
         const values = new URLSearchParams();
-        for (const key of ["response_type", "client_id", "redirect_uri", "code_challenge", "code_challenge_method", "state", "resource"]) {
-          values.set(key, String(form.get(key) || ""));
+        for (const key of ['response_type', 'client_id', 'redirect_uri', 'code_challenge', 'code_challenge_method', 'state', 'resource', 'scope']) {
+          values.set(key, String(form.get(key) || ''));
         }
-        const checked = validateAuthorize(values, config);
-        const rateKey = "owner-attempt:" + await sha256Hex(String(request.headers.get("cf-connecting-ip") || "unknown") + ":" + checked.client.clientId);
-        if (await config.ledger.blocked(rateKey, nowSeconds(config))) return json({ code: "OWNER_RATE_LIMITED" }, 429, { "retry-after": "900" });
-        const suppliedPasscode = String(form.get("passcode") || "");
+        const checked = await validateAuthorize(values, config);
+        const chosen = checked.fixedIdentity || actorIdentity(form.get('actor'));
+        if (!chosen) return json({ code: 'ACTOR_REQUIRED' }, 400);
+        if (checked.client.kind === 'REGISTERED' && chosen.subject !== checked.client.subject) return json({ code: 'ACTOR_MISMATCH' }, 400);
+        const rateKey = 'owner-attempt:' + await sha256Hex(String(request.headers.get('cf-connecting-ip') || 'unknown') + ':' + checked.client.clientId + ':' + chosen.subject);
+        if (await config.ledger.blocked(rateKey, nowSeconds(config))) return json({ code: 'OWNER_RATE_LIMITED' }, 429, { 'retry-after': '900' });
+        const suppliedPasscode = String(form.get('passcode') || '');
         if (!timingSafeEqual(suppliedPasscode, config.ownerPasscode)) {
           await config.ledger.failure(rateKey, nowSeconds(config));
-          return json({ code: "OWNER_AUTH_FAILED" }, 403);
+          return json({ code: 'OWNER_AUTH_FAILED' }, 403);
         }
         const code = await createTestAuthorizationCode({
           ...config,
           clientId: checked.client.clientId,
-          subject: checked.client.subject,
-          scope: checked.client.scope,
+          subject: chosen.subject,
+          scope: chosen.scope,
           redirectUri: checked.redirectUri,
           codeChallenge: checked.codeChallenge,
           resource: checked.resource,
         });
         const redirect = new URL(checked.redirectUri);
-        redirect.searchParams.set("code", code);
-        if (checked.state) redirect.searchParams.set("state", checked.state);
-        redirect.searchParams.set("iss", config.issuer);
+        redirect.searchParams.set('code', code);
+        if (checked.state) redirect.searchParams.set('state', checked.state);
+        redirect.searchParams.set('iss', config.issuer);
         return Response.redirect(redirect.toString(), 302);
       }
 
-      if (url.pathname === "/oauth/token" && request.method === "POST") {
-        const credentials = readBasic(request);
-        const client = credentials ? clientById(config, credentials[0]) : null;
-        if (!client || !timingSafeEqual(credentials[1], client.clientSecret)) {
-          return json({ error: "invalid_client" }, 401);
-        }
-
+      if (url.pathname === '/oauth/token' && request.method === 'POST') {
         const form = await request.formData();
+        const client = await clientFromTokenRequest(request, form, config);
+        if (!client) return json({ error: 'invalid_client' }, 401);
+
         let resource;
         try {
-          resource = resolveClientResource(config, client, form.get("resource"));
+          resource = resolveClientResource(config, client, form.get('resource'));
         } catch {
-          return json({ error: "invalid_grant" }, 400);
+          return json({ error: 'invalid_grant' }, 400);
         }
-        const grantType = String(form.get("grant_type") || "");
+        const grantType = String(form.get('grant_type') || '');
 
-        if (grantType === "refresh_token") {
-          const refreshToken = String(form.get("refresh_token") || "");
-          if (!refreshToken) return json({ error: "invalid_grant" }, 400);
+        if (grantType === 'refresh_token') {
+          const refreshToken = String(form.get('refresh_token') || '');
+          if (!refreshToken) return json({ error: 'invalid_grant' }, 400);
           let refresh;
-          try {
-            refresh = await verifyEnvelope(refreshToken, config.signingKey);
-          } catch {
-            return json({ error: "invalid_grant" }, 400);
-          }
-          if (!validRefreshToken(refresh, config, client, resource, nowSeconds(config))) {
-            return json({ error: "invalid_grant" }, 400);
-          }
-          if (!await config.ledger.consume("refresh:" + await sha256Hex(refreshToken), refresh.exp)) return json({ error: "invalid_grant" }, 400);
-          const rotatedRefreshToken = await createTestRefreshToken({
-            ...config,
-            clientId:client.clientId,
-            resource,
-            subject:client.subject,
-            scope:client.scope,
-          });
+          try { refresh = await verifyEnvelope(refreshToken, config.signingKey); }
+          catch { return json({ error: 'invalid_grant' }, 400); }
+          if (!validRefreshToken(refresh, config, client, resource, nowSeconds(config))) return json({ error: 'invalid_grant' }, 400);
+          if (!await config.ledger.consume('refresh:' + await sha256Hex(refreshToken), refresh.exp)) return json({ error: 'invalid_grant' }, 400);
+          const rotatedRefreshToken = await createTestRefreshToken({ ...config, clientId: client.clientId, resource, subject: refresh.sub, scope: refresh.scope });
           return json({
-            access_token: await createTestAccessToken({ ...config, clientId: client.clientId, resource, subject: client.subject, scope: client.scope }),
-            token_type: "Bearer",
+            access_token: await createTestAccessToken({ ...config, clientId: client.clientId, resource, subject: refresh.sub, scope: refresh.scope }),
+            token_type: 'Bearer',
             expires_in: ACCESS_TOKEN_TTL_SECONDS,
             refresh_token: rotatedRefreshToken,
             refresh_token_expires_in: refreshTokenTtlSeconds(config),
-            scope: client.scope,
-          }, 200, { "cache-control": "no-store" });
+            scope: refresh.scope,
+          }, 200, { 'cache-control': 'no-store' });
         }
 
-        const redirectUri = String(form.get("redirect_uri") || "");
-        if (grantType !== "authorization_code" || !client.redirectUris.includes(redirectUri)) {
-          return json({ error: "invalid_grant" }, 400);
-        }
-        const code = await verifyEnvelope(String(form.get("code") || ""), config.signingKey);
+        const redirectUri = String(form.get('redirect_uri') || '');
+        if (grantType !== 'authorization_code' || !client.redirectUris.includes(redirectUri)) return json({ error: 'invalid_grant' }, 400);
+        let code;
+        try { code = await verifyEnvelope(String(form.get('code') || ''), config.signingKey); }
+        catch { return json({ error: 'invalid_grant' }, 400); }
         const current = nowSeconds(config);
-        if (code.type !== "code" || code.iss !== config.issuer || code.aud !== client.clientId ||
-            code.sub !== client.subject || code.scope !== client.scope || code.redirect_uri !== redirectUri || code.resource !== resource ||
+        if (code.type !== 'code' || code.iss !== config.issuer || code.aud !== client.clientId ||
+            !clientAllowsIdentity(client, code.sub, code.scope) || code.redirect_uri !== redirectUri || code.resource !== resource ||
             !Number.isFinite(code.exp) || code.exp <= current) {
-          return json({ error: "invalid_grant" }, 400);
+          return json({ error: 'invalid_grant' }, 400);
         }
-        const verifier = String(form.get("code_verifier") || "");
-        if (!timingSafeEqual(await sha256Base64url(verifier), code.code_challenge)) {
-          return json({ error: "invalid_grant" }, 400);
-        }
-        if (!await config.ledger.consume("code:" + await sha256Hex(String(form.get("code"))), code.exp)) return json({ error: "invalid_grant" }, 400);
+        const verifier = String(form.get('code_verifier') || '');
+        if (!timingSafeEqual(await sha256Base64url(verifier), code.code_challenge)) return json({ error: 'invalid_grant' }, 400);
+        if (!await config.ledger.consume('code:' + await sha256Hex(String(form.get('code'))), code.exp)) return json({ error: 'invalid_grant' }, 400);
         return json({
-          access_token: await createTestAccessToken({ ...config, clientId: client.clientId, resource, subject: client.subject, scope: client.scope }),
-          token_type: "Bearer",
+          access_token: await createTestAccessToken({ ...config, clientId: client.clientId, resource, subject: code.sub, scope: code.scope }),
+          token_type: 'Bearer',
           expires_in: ACCESS_TOKEN_TTL_SECONDS,
-          refresh_token: await createTestRefreshToken({ ...config, clientId: client.clientId, resource, subject: client.subject, scope: client.scope }),
+          refresh_token: await createTestRefreshToken({ ...config, clientId: client.clientId, resource, subject: code.sub, scope: code.scope }),
           refresh_token_expires_in: refreshTokenTtlSeconds(config),
-          scope: client.scope,
-        }, 200, { "cache-control": "no-store" });
+          scope: code.scope,
+        }, 200, { 'cache-control': 'no-store' });
       }
     } catch {
-      return json({ code: "OAUTH_BAD_REQUEST" }, 400);
+      return json({ code: 'OAUTH_BAD_REQUEST' }, 400);
     }
 
-    return json({ code: "NOT_FOUND" }, 404);
+    return json({ code: 'NOT_FOUND' }, 404);
   };
 }
