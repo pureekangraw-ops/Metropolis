@@ -10,6 +10,11 @@ function text(value, name) {
 
 function clone(value) { return value == null ? value : JSON.parse(JSON.stringify(value)); }
 
+function references(value, name) {
+  if (!Array.isArray(value) || value.some(ref => typeof ref !== 'string' || !ref.trim())) throw new TypeError(`${name}_MUST_BE_STRING_ARRAY`);
+  return value.map(ref => ref.trim());
+}
+
 export function createMemoryStore() {
   const records = new Map();
   return Object.freeze({
@@ -42,6 +47,7 @@ export function createCityRuntime({ store = createMemoryStore(), clock = () => n
   const mailboxes = new Map();
 
   async function intake({ workId = idFactory(), checkpointId, ownerSystem, requestedBy = 'UNKNOWN', inputRefs = [] } = {}) {
+    inputRefs = references(inputRefs, 'inputRefs');
     const id = text(workId, 'workId');
     const owner = text(ownerSystem, 'ownerSystem');
     const existing = await store.get(`work:${id}`);
@@ -53,6 +59,7 @@ export function createCityRuntime({ store = createMemoryStore(), clock = () => n
   }
 
   async function handoff({ workId, checkpointId, stationId, railId, operation, actor = 'HERMES', payload = {} } = {}) {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new TypeError('payload_MUST_BE_OBJECT');
     const id = text(workId, 'workId');
     const record = await store.get(`work:${id}`);
     if (!record) throw new Error('WORK_NOT_FOUND');
@@ -65,6 +72,7 @@ export function createCityRuntime({ store = createMemoryStore(), clock = () => n
   }
 
   async function returnWork({ workId, checkpointId, readback, evidenceRefs = [], verified = false, actor = 'MIMIR' } = {}) {
+    evidenceRefs = references(evidenceRefs, 'evidenceRefs');
     const id = text(workId, 'workId');
     const record = await store.get(`work:${id}`);
     if (!record) throw new Error('WORK_NOT_FOUND');

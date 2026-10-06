@@ -410,22 +410,25 @@ export function createContextPack(input = {}) {
   const consumer = normalizeConsumer(input.consumer);
   const records = Array.isArray(input.records) ? input.records : [];
   const accessible = records.filter(record => record.accessScope.allowedConsumers.includes(consumer));
+  const effectiveScope = intersectAccessScopes(accessible.map(record => record.accessScope));
+  const allowedField = field => effectiveScope.fields === null || effectiveScope.fields.includes(field);
   const currentFacts = accessible
     .filter(record => record.lifecycleStatus === "current")
-    .map(record => record.summary || record.title);
+    .map(record => (allowedField('summary') && record.summary) || (allowedField('title') && record.title))
+    .filter(Boolean);
   const warnings = accessible
+    .filter(() => allowedField('recordId') && allowedField('lifecycleStatus'))
     .filter(record => ["stale", "legacy", "smoke", "conflict", "unknown"].includes(record.lifecycleStatus))
     .map(record => `${record.recordId}:${record.lifecycleStatus}`);
-  const effectiveScope = intersectAccessScopes(accessible.map(record => record.accessScope));
   return deepFreeze({
     schemaVersion: MIMIR_LOGIC_VERSION,
     contextPackId: text(input.contextPackId, "contextPackId"),
     consumer,
     effectiveScope,
-    basedOnRecordIds: accessible.map(record => record.recordId),
+    basedOnRecordIds: allowedField('recordId') ? accessible.map(record => record.recordId) : [],
     currentFacts,
     warnings,
-    evidenceRefs: [...new Set(accessible.flatMap(record => record.evidenceRefs))],
+    evidenceRefs: allowedField('evidenceRefs') ? [...new Set(accessible.flatMap(record => record.evidenceRefs))] : [],
     generatedAt: iso(input.generatedAt ?? new Date().toISOString(), "generatedAt"),
     routeHint: null,
     routeEvidenceRefs: [],
@@ -443,16 +446,17 @@ export function projectForConsumer(record, consumer) {
       fields: record.accessScope.fields,
     })
     : normalizeAccessScope({ visibility: "restricted", allowedConsumers: [] });
+  const allowedField = field => allowed && (effectiveScope.fields === null || effectiveScope.fields.includes(field));
   return deepFreeze({
     schemaVersion: MIMIR_LOGIC_VERSION,
     consumer: normalizedConsumer,
-    recordId: record.recordId,
+    recordId: allowedField('recordId') ? record.recordId : null,
     effectiveScope,
-    lifecycleStatus: allowed ? record.lifecycleStatus : "restricted",
-    sourceRefs: allowed ? record.sourceRefs : [],
-    evidenceRefs: allowed ? record.evidenceRefs : [],
-    routeHint: allowed ? record.routeHint : null,
-    routeEvidenceRefs: allowed ? record.routeEvidenceRefs : [],
+    lifecycleStatus: allowedField('lifecycleStatus') ? record.lifecycleStatus : "restricted",
+    sourceRefs: allowedField('sourceRefs') ? record.sourceRefs : [],
+    evidenceRefs: allowedField('evidenceRefs') ? record.evidenceRefs : [],
+    routeHint: allowedField('routeHint') && allowedField('routeEvidenceRefs') ? record.routeHint : null,
+    routeEvidenceRefs: allowedField('routeEvidenceRefs') ? record.routeEvidenceRefs : [],
     routeDerivedByMimir: false,
   });
 }
