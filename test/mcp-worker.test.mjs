@@ -32,16 +32,49 @@ test('shared gateway verifies LIGHT scope and rejects legacy issuer', async () =
     headers: { authorization: 'Bearer ' + old, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'metropolis_arrive', arguments: {} } }),
   }));
-  assert.equal(response.status, 200);
+  assert.equal(response.status, 401);
   const denied = await response.json();
-  assert.equal(denied.result.structuredContent.reason, 'AUTH_REQUIRED');
-  assert.ok(denied.result._meta['mcp/www_authenticate']);
+  assert.equal(denied.reason, 'AUTH_REQUIRED');
+  assert.match(response.headers.get('www-authenticate') || '', /resource_metadata="https:\/\/city\.example\/\.well-known\/oauth-protected-resource"/);
 });
 test('missing configuration and unknown source never advertise READY', async () => {
   const bad = createGateway({ env: {}, storage: storage(), sourceSha: 'UNKNOWN' });
   assert.equal((await bad.fetch(new Request(origin + '/health'))).status, 503);
   assert.equal((await bad.fetch(new Request(origin + '/mcp', { method: 'POST' }))).status, 503);
 });
+test('MCP entry advertises OAuth with an HTTP 401 challenge before initialize', async () => {
+  const gateway = createGateway({ env, storage: storage(), sourceSha: 'a'.repeat(40) });
+  const response = await gateway.fetch(new Request(origin + '/mcp', {
+    method: 'POST',
+    headers: {
+      origin: 'https://chatgpt.com',
+      'content-type': 'application/json',
+      accept: 'application/json, text/event-stream',
+    },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-11-25' } }),
+  }));
+  assert.equal(response.status, 401);
+  assert.equal((await response.json()).reason, 'AUTH_REQUIRED');
+  assert.match(response.headers.get('www-authenticate') || '', /resource_metadata="https:\/\/city\.example\/\.well-known\/oauth-protected-resource"/);
+});
+
+test('authenticated ChatGPT origin reaches the MCP service', async () => {
+  const gateway = createGateway({ env, storage: storage(), sourceSha: 'a'.repeat(40) });
+  const token = await createTestAccessToken({ issuer: origin, resource: origin + '/mcp', signingKey: env.MCP_OAUTH_SIGNING_KEY, subject: 'GO', scope: 'metropolis-go', clientId: 'go' });
+  const response = await gateway.fetch(new Request(origin + '/mcp', {
+    method: 'POST',
+    headers: {
+      origin: 'https://chatgpt.com',
+      authorization: 'Bearer ' + token,
+      'content-type': 'application/json',
+      accept: 'application/json, text/event-stream',
+    },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-11-25' } }),
+  }));
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).result.serverInfo.name, 'metropolis');
+});
+
 test('OAuth discovery stays public even when the client sends a foreign Origin header', async () => {
   const gateway = createGateway({ env, storage: storage(), sourceSha: 'a'.repeat(40) });
   const response = await gateway.fetch(new Request(origin + '/.well-known/oauth-authorization-server', {
@@ -67,8 +100,8 @@ test('one registered client can connect before LIGHT onboarding', async () => {
   assert.equal((await gateway.fetch(new Request(origin + '/health'))).status, 200);
   assert.equal((await call(gateway, 'metropolis_arrive', {})).body.result.structuredContent.actor, 'GO');
   const denied = await call(gateway, 'metropolis_arrive', {}, 'LIGHT');
-  assert.equal(denied.response.status, 200);
-  assert.equal(denied.body.result.structuredContent.reason, 'AUTH_REQUIRED');
+  assert.equal(denied.response.status, 401);
+  assert.equal(denied.body.reason, 'AUTH_REQUIRED');
 });
 test('empty static clients allow CIMD while invalid static registration fails closed', async () => {
   const noStatic = createGateway({ env: { ...env, MCP_OAUTH_CLIENTS: '[]' }, storage: storage(), sourceSha: 'a'.repeat(40) });
@@ -87,9 +120,9 @@ test('a GO subject cannot authenticate with the LIGHT client identity', async ()
     headers: { authorization: 'Bearer ' + wrongClient, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'metropolis_arrive', arguments: {} } }),
   }));
-  assert.equal(response.status, 200);
+  assert.equal(response.status, 401);
   const denied = await response.json();
-  assert.equal(denied.result.structuredContent.reason, 'AUTH_REQUIRED');
+  assert.equal(denied.reason, 'AUTH_REQUIRED');
 });
 test('slow and oversized public bodies stop before the durable entry gate', async () => {
   const slow = new Request(origin + '/oauth/authorize', { method: 'POST', body: new ReadableStream({ start() {} }), duplex: 'half' });
