@@ -16,12 +16,12 @@ async function call(gateway, name, args, subject = 'GO') {
 test('Work survives a fresh gateway on the same durable storage', async () => {
   const durable = storage();
   const first = createGateway({ env, storage: durable, sourceSha: 'a'.repeat(40) });
-  const manifest = (await call(first, 'metropolis_arrive', {})).body.result.structuredContent;
-  const args = { schemaHash: manifest.schemaHash, action: 'intake', workId: 'W', checkpointId: 'CP', payload: { ownerSystem: 'FACTORY' } };
+  await call(first, 'metropolis_arrive', {});
+  const args = { action: 'intake', workId: 'W', payload: {} };
   assert.equal((await call(first, 'metropolis_work', args)).body.result.isError, false);
   const next = createGateway({ env, storage: durable, sourceSha: 'a'.repeat(40) });
-  const read = await call(next, 'metropolis_work', { ...args, action: 'read' });
-  assert.equal(read.body.result.structuredContent.record.checkpointId, 'CP');
+  const read = await call(next, 'metropolis_work', { action: 'read', workId: 'W' });
+  assert.equal(read.body.result.structuredContent.record.checkpointId, 'W:CP-01');
 });
 test('shared gateway verifies LIGHT scope and rejects legacy issuer', async () => {
   const gateway = createGateway({ env, storage: storage(), sourceSha: 'a'.repeat(40) });
