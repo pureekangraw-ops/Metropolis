@@ -41,6 +41,16 @@ test('OAuth cannot issue grants without persistent replay protection', async () 
   const cfg = config(); delete cfg.ledger;
   assert.equal((await createOAuthHandler(cfg)(token({ grant_type: 'refresh_token' }))).status, 503);
 });
+test('authorization server discovery also works at the MCP path-scoped well-known URL', async () => {
+  const cfg = config();
+  const handler = createOAuthHandler(cfg);
+  const root = await handler(new Request(issuer + '/.well-known/oauth-authorization-server'));
+  const scoped = await handler(new Request(issuer + '/.well-known/oauth-authorization-server/mcp'));
+  assert.equal(root.status, 200);
+  assert.equal(scoped.status, 200);
+  assert.deepEqual(await scoped.json(), await root.json());
+});
+
 test('resource discovery exposes shared Metropolis scopes', async () => {
   const cfg = config();
   const response = await createOAuthHandler(cfg)(new Request(issuer + '/.well-known/oauth-protected-resource/mcp'));
