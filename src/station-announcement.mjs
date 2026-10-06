@@ -1,0 +1,2 @@
+function required(value, name) { if (typeof value !== 'string' || value.trim() === '') throw new TypeError(`${name}_REQUIRED`); return value.trim(); }
+export function createStationAnnouncement({ city = 'METROPOLIS', version, schema, source } = {}) { return Object.freeze({ city: required(city, 'city'), version: required(version, 'version'), schema: required(schema, 'schema'), source: required(source, 'source'), readOnly: true }); }
