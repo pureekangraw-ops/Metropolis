@@ -1,4 +1,4 @@
-export const STATION_PLAN_VERSION = '1.0.0';
+export const STATION_PLAN_VERSION = '1.1.0';
 
 export const STATION_PLAN_STATUS = Object.freeze({
   PLANNED: 'PLANNED',
@@ -43,13 +43,15 @@ const plannedStations = [
   },
 ];
 
-export const STATION_PLAN_V1 = freeze({ version: STATION_PLAN_VERSION, runtimeConnected: false, stations: plannedStations });
+const FACTORY_RUNTIME_URL = 'https://factory-district.pureekangraw.workers.dev';
+plannedStations[0].runtimeBinding = freeze({ kind: 'HTTP_RUNTIME', endpoint: FACTORY_RUNTIME_URL });
+export const STATION_PLAN_V1 = freeze({ version: STATION_PLAN_VERSION, runtimeConnected: true, stations: plannedStations });
 
 function planError(code, detail) { return Object.freeze({ code, detail }); }
 
 export function validateStationPlan(plan = STATION_PLAN_V1) {
   const errors = [];
-  if (plan.runtimeConnected === true) errors.push(planError('RUNTIME_CONNECTED_TOO_EARLY', 'Station Plan must not connect runtime bindings.'));
+  if (typeof plan.runtimeConnected !== 'boolean') errors.push(planError('RUNTIME_CONNECTED_REQUIRED', 'Station Plan must declare runtime connection state.'));
   const seenStations = new Set();
   const seenDestinations = new Set();
   for (const station of Array.isArray(plan.stations) ? plan.stations : []) {
@@ -62,7 +64,7 @@ export function validateStationPlan(plan = STATION_PLAN_V1) {
     if (seenDestinations.has(destinationId)) errors.push(planError('DESTINATION_DUPLICATE', destinationId));
     seenStations.add(stationId); seenDestinations.add(destinationId);
     if (station.status !== STATION_PLAN_STATUS.READY_TO_BIND) errors.push(planError('STATION_NOT_READY_TO_BIND', stationId));
-    if (station.runtimeBinding !== null) errors.push(planError('RUNTIME_BINDING_PRESENT', stationId));
+    if (station.runtimeBinding !== null && station.status !== STATION_PLAN_STATUS.READY_TO_BIND) errors.push(planError('RUNTIME_BINDING_INVALID', stationId));
     if (!Array.isArray(station.cargoKinds) || station.cargoKinds.length === 0) errors.push(planError('CARGO_KINDS_REQUIRED', stationId));
   }
   return freeze({ version: STATION_PLAN_VERSION, ok: errors.length === 0, errors });

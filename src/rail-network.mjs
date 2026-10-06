@@ -1,4 +1,4 @@
-import { createOathRequest, advanceOath, failOath, OATH_STATE } from './oath.mjs';
+import { createTransportRequest, advanceTransport, failTransport, TRANSPORT_STATE } from './transport.mjs';
 
 export const STATION_STATUS = Object.freeze({
   READY: 'READY',
@@ -84,15 +84,15 @@ export function createConnectionEngine({ clock = () => new Date().toISOString(),
       payload,
     };
     const entry = stations.get(request.stationId);
-    const oathId = idFactory();
-    let oath = createOathRequest({ oathId, ...request, railId: entry?.rail?.railId || 'UNKNOWN', requestedAt: clock() });
-    const trace = [{ state: OATH_STATE.REQUEST, at: oath.timestamps.requestedAt }];
+    const transportId = idFactory();
+    let transport = createTransportRequest({ transportId, ...request, railId: entry?.rail?.railId || 'UNKNOWN', requestedAt: clock() });
+    const trace = [{ state: TRANSPORT_STATE.REQUEST, at: transport.timestamps.requestedAt }];
     let stage = 'STATION';
 
     if (!entry) {
       const failure = makeFailure('STATION', 'STATION_NOT_REGISTERED');
-      oath = failOath(oath, failure, clock());
-      return { outcome: 'UNKNOWN', oath, trace, failure };
+      transport = failTransport(transport, failure, clock());
+      return { outcome: 'UNKNOWN', transport, trace, failure };
     }
 
     try {
@@ -100,58 +100,58 @@ export function createConnectionEngine({ clock = () => new Date().toISOString(),
       trace.push({ stage: 'STATION', status: stationSnapshot.status, at: stationSnapshot.observedAt || clock() });
       if (!DISPATCHABLE.has(stationSnapshot.status)) {
         const failure = makeFailure('STATION', `STATION_${stationSnapshot.status}`, 'Station is not dispatchable');
-        oath = failOath(oath, failure, clock());
-        return { outcome: stationSnapshot.status === STATION_STATUS.UNKNOWN ? 'UNKNOWN' : 'FAILED', oath, trace, station: stationSnapshot, failure };
+        transport = failTransport(transport, failure, clock());
+        return { outcome: stationSnapshot.status === STATION_STATUS.UNKNOWN ? 'UNKNOWN' : 'FAILED', transport, trace, station: stationSnapshot, failure };
       }
 
       stage = 'RAIL';
       const identity = stationSnapshot.identity || {};
       if (identity.stationId !== entry.station.stationId || identity.railId !== entry.rail.railId || identity.ownerSystem !== entry.station.ownerSystem) {
         const failure = makeFailure('RAIL', 'RAIL_IDENTITY_MISMATCH', 'Runtime identity does not match the registered Station/Rail pair');
-        oath = failOath(oath, failure, clock());
-        return { outcome: 'FAILED', oath, trace, station: stationSnapshot, failure };
+        transport = failTransport(transport, failure, clock());
+        return { outcome: 'FAILED', transport, trace, station: stationSnapshot, failure };
       }
       const capability = railCapability(stationSnapshot, request.operation);
       if (capability.status !== STATION_STATUS.READY) {
         const failure = makeFailure('RAIL', `RAIL_CAPABILITY_${capability.status}`, capability.reason || 'Rail capability is not verified');
-        oath = failOath(oath, failure, clock());
-        return { outcome: outcomeForRailCapability(capability), oath, trace, station: stationSnapshot, failure };
+        transport = failTransport(transport, failure, clock());
+        return { outcome: outcomeForRailCapability(capability), transport, trace, station: stationSnapshot, failure };
       }
 
       stage = 'AUTH';
       const decision = await authorizer(request);
       if (!decision?.allowed) {
         const failure = makeFailure('AUTH', decision?.reason || 'DENIED', 'Agent is not authorized for this Station and Work');
-        oath = failOath(oath, failure, clock());
-        return { outcome: 'FAILED', oath, trace, station: stationSnapshot, failure };
+        transport = failTransport(transport, failure, clock());
+        return { outcome: 'FAILED', transport, trace, station: stationSnapshot, failure };
       }
-      oath = advanceOath(oath, OATH_STATE.ACCEPTED, { timestamps: { ...oath.timestamps, acceptedAt: clock() } });
-      trace.push({ state: oath.state, at: oath.timestamps.acceptedAt });
+      transport = advanceTransport(transport, TRANSPORT_STATE.ACCEPTED, { timestamps: { ...transport.timestamps, acceptedAt: clock() } });
+      trace.push({ state: transport.state, at: transport.timestamps.acceptedAt });
 
       stage = 'TRANSPORT';
-      oath = advanceOath(oath, OATH_STATE.DISPATCHED, { timestamps: { ...oath.timestamps, dispatchedAt: clock() } });
-      trace.push({ state: oath.state, at: oath.timestamps.dispatchedAt });
-      const receipt = await entry.adapter.dispatch({ oath: { ...oath, payload: request.payload }, station: entry.station, rail: entry.rail });
+      transport = advanceTransport(transport, TRANSPORT_STATE.DISPATCHED, { timestamps: { ...transport.timestamps, dispatchedAt: clock() } });
+      trace.push({ state: transport.state, at: transport.timestamps.dispatchedAt });
+      const receipt = await entry.adapter.dispatch({ transport: { ...transport, payload: request.payload }, station: entry.station, rail: entry.rail });
       if (!receipt?.accepted) throw Object.assign(new Error('RECEIPT_NOT_ACCEPTED'), { code: 'RECEIPT_NOT_ACCEPTED' });
-      oath = advanceOath(oath, OATH_STATE.RECEIPT, { receipt, timestamps: { ...oath.timestamps, receiptAt: clock() } });
-      trace.push({ state: oath.state, at: oath.timestamps.receiptAt });
+      transport = advanceTransport(transport, TRANSPORT_STATE.RECEIPT, { receipt, timestamps: { ...transport.timestamps, receiptAt: clock() } });
+      trace.push({ state: transport.state, at: transport.timestamps.receiptAt });
 
       stage = 'READBACK';
-      const readback = await entry.adapter.readback({ oath: { ...oath, payload: request.payload }, receipt, station: entry.station, rail: entry.rail });
-      oath = advanceOath(oath, OATH_STATE.READBACK, {
+      const readback = await entry.adapter.readback({ transport: { ...transport, payload: request.payload }, receipt, station: entry.station, rail: entry.rail });
+      transport = advanceTransport(transport, TRANSPORT_STATE.READBACK, {
         readback,
         evidenceRef: readback?.evidenceRef || null,
-        timestamps: { ...oath.timestamps, readbackAt: clock() },
+        timestamps: { ...transport.timestamps, readbackAt: clock() },
       });
-      trace.push({ state: oath.state, at: oath.timestamps.readbackAt });
+      trace.push({ state: transport.state, at: transport.timestamps.readbackAt });
       if (readback?.verified !== true || !readback.evidenceRef) {
-        return { outcome: 'UNKNOWN', oath, trace, station: stationSnapshot, failure: makeFailure('READBACK', 'READBACK_NOT_VERIFIED', 'Receipt exists but live readback is not verified') };
+        return { outcome: 'UNKNOWN', transport, trace, station: stationSnapshot, failure: makeFailure('READBACK', 'READBACK_NOT_VERIFIED', 'Receipt exists but live readback is not verified') };
       }
-      return { outcome: 'VERIFIED', oath, trace, station: stationSnapshot };
+      return { outcome: 'VERIFIED', transport, trace, station: stationSnapshot };
     } catch (error) {
       const failure = makeFailure(error.stage || stage, error.code || 'TRANSPORT_ERROR', error.message);
-      if (oath.state !== OATH_STATE.FAILED) oath = failOath(oath, failure, clock());
-      return { outcome: failure.stage === 'STATION' ? 'UNKNOWN' : 'FAILED', oath, trace, failure };
+      if (transport.state !== TRANSPORT_STATE.FAILED) transport = failTransport(transport, failure, clock());
+      return { outcome: failure.stage === 'STATION' ? 'UNKNOWN' : 'FAILED', transport, trace, failure };
     }
   }
 
