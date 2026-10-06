@@ -15,17 +15,45 @@ async function rpc(server, method, params = {}, token = 'go', id = 1) {
 async function arrive(server, token = 'go') {
   return (await (await rpc(server, 'tools/call', { name: 'metropolis_arrive', arguments: {} }, token)).json()).result.structuredContent;
 }
-test('same MCP entry identifies GO and LIGHT from authentication', async () => {
+test('same MCP entry identifies GO and LIGHT while discovery stays available before linking', async () => {
   assert.equal((await arrive(service())).actor, 'GO');
   assert.equal((await arrive(service(), 'light')).actor, 'LIGHT');
-  assert.equal((await rpc(service(), 'tools/list', {}, 'invalid')).status, 401);
+
+  const listed = await rpc(service(), 'tools/list', {}, 'invalid');
+  assert.equal(listed.status, 200);
+  const listedBody = await listed.json();
+  assert.ok(listedBody.result.tools.every(tool => tool.securitySchemes?.some(scheme => scheme.type === 'oauth2')));
+
+  const unauthenticated = await (await rpc(service(), 'tools/call', { name: 'metropolis_arrive', arguments: {} }, 'invalid')).json();
+  assert.equal(unauthenticated.result.isError, true);
+  assert.equal(unauthenticated.result.structuredContent.reason, 'AUTH_REQUIRED');
+  assert.match(unauthenticated.result._meta['mcp/www_authenticate'][0], /resource_metadata=/);
+  assert.match(unauthenticated.result._meta['mcp/www_authenticate'][0], /error_description=/);
 });
+test('profile tool exposes stable distinct GO and LIGHT connection identities', async () => {
+  const server = service();
+  const go = (await (await rpc(server, 'tools/call', { name: 'metropolis_identity', arguments: {} }, 'go')).json()).result;
+  const light = (await (await rpc(server, 'tools/call', { name: 'metropolis_identity', arguments: {} }, 'light')).json()).result;
+  assert.equal(go.isError, false);
+  assert.equal(light.isError, false);
+  assert.equal(go.structuredContent.name, 'GO');
+  assert.equal(light.structuredContent.name, 'LIGHT');
+  assert.ok(go.structuredContent.id);
+  assert.ok(light.structuredContent.id);
+  assert.notEqual(go.structuredContent.id, light.structuredContent.id);
+
+  const listed = await (await rpc(server, 'tools/list', {}, 'invalid')).json();
+  const profileDescriptor = listed.result.tools.find(tool => tool.name === 'metropolis_identity');
+  assert.equal(profileDescriptor._meta['openai/profile'], true);
+  assert.equal(profileDescriptor.outputSchema.required.includes('id'), true);
+});
+
 test('old room receives current schemas without creating another session', async () => {
   const old = await arrive(service('release-one'));
   const current = await arrive(service('release-two'));
   assert.notEqual(old.schemaHash, current.schemaHash);
   assert.equal(current.sourceSha, 'release-two');
-  assert.deepEqual(current.tools.map(t => t.name), ['metropolis_arrive', 'metropolis_work']);
+  assert.deepEqual(current.tools.map(t => t.name), ['metropolis_identity', 'metropolis_arrive', 'metropolis_work']);
   assert.equal(current.refresh.transportNotificationSupported, false);
 });
 test('stale schema blocks writes and returns current station manifest', async () => {
