@@ -42,6 +42,17 @@ test('missing configuration and unknown source never advertise READY', async () 
   assert.equal((await bad.fetch(new Request(origin + '/health'))).status, 503);
   assert.equal((await bad.fetch(new Request(origin + '/mcp', { method: 'POST' }))).status, 503);
 });
+test('OAuth discovery stays public even when the client sends a foreign Origin header', async () => {
+  const gateway = createGateway({ env, storage: storage(), sourceSha: 'a'.repeat(40) });
+  const response = await gateway.fetch(new Request(origin + '/.well-known/oauth-authorization-server', {
+    headers: { origin: 'https://chatgpt.com' },
+  }));
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.issuer, origin);
+  assert.deepEqual(body.code_challenge_methods_supported, ['S256']);
+});
+
 test('health reports build identity without credentials', async () => {
   const gateway = createGateway({ env, storage: storage(), sourceSha: 'a'.repeat(40) });
   const response = await gateway.fetch(new Request(origin + '/health'));
