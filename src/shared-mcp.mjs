@@ -44,7 +44,7 @@ const tools = [
 const actionSchemas = {
   read: { type: 'object', properties: {}, additionalProperties: false },
   intake: { type: 'object', properties: { ownerSystem: string, inputRefs: { type: 'array', items: string } }, required: ['ownerSystem'], additionalProperties: false },
-  handoff: { type: 'object', properties: { stationId: string, railId: string, operation: string, payload: { type: 'object' } }, required: ['stationId', 'railId', 'operation'], additionalProperties: false },
+  handoff: { type: 'object', properties: { stationId: string, operation: string, payload: { type: 'object' } }, required: ['stationId', 'operation'], additionalProperties: false },
   return: { type: 'object', properties: { readback: { type: 'object' }, evidenceRefs: { type: 'array', items: string } }, additionalProperties: false },
 };
 export function json(body, status = 200, extra = {}) {
@@ -141,8 +141,8 @@ export function createMetropolisMcp({ runtime, authenticate, grants = [], source
         if (grant.ownerSystem !== payload.ownerSystem) throw new Error('OWNER_NOT_GRANTED');
         record = await runtime.intake({ workId, checkpointId, ownerSystem: payload.ownerSystem, requestedBy: actor, inputRefs: payload.inputRefs || [] });
       } else if (action === 'handoff') {
-        if (grant.stationId !== payload.stationId || grant.railId !== payload.railId || grant.operation !== payload.operation) throw new Error('DESTINATION_NOT_GRANTED');
-        record = await runtime.handoff({ workId, checkpointId, actor, stationId: payload.stationId, railId: payload.railId, operation: payload.operation, payload: payload.payload || {} });
+        if (grant.stationId !== payload.stationId || grant.operation !== payload.operation) throw new Error('DESTINATION_NOT_GRANTED');
+        record = await runtime.handoff({ workId, checkpointId, actor, stationId: payload.stationId, operation: payload.operation, payload: payload.payload || {} });
       } else if (action === 'return') {
         // Agent-supplied flags cannot declare verified owner reality.
         record = await runtime.returnWork({ workId, checkpointId, actor, readback: payload.readback, evidenceRefs: payload.evidenceRefs || [], verified: false });

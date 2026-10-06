@@ -154,9 +154,9 @@ test('return records evidence without accepting an agent claim of verified execu
 test('handoff cannot widen its destination or override its Work identity', async () => {
   const runtime = createCityRuntime();
   await runtime.intake({ workId: 'W1', ownerSystem: 'FACTORY' });
-  const server = service('one', runtime, [{ actor: 'GO', action: 'handoff', workId: 'W1', stationId: 'FACTORY_STATION', railId: 'FACTORY_RAIL', operation: 'CODE' }]);
+  const server = service('one', runtime, [{ actor: 'GO', action: 'handoff', workId: 'W1', stationId: 'FACTORY_STATION', operation: 'CODE' }]);
   const manifest = await arrive(server);
-  const args = { schemaHash: manifest.schemaHash, action: 'handoff', workId: 'W1', checkpointId: 'W1:CP-01', payload: { stationId: 'OTHER_STATION', railId: 'FACTORY_RAIL', operation: 'CODE' } };
+  const args = { schemaHash: manifest.schemaHash, action: 'handoff', workId: 'W1', checkpointId: 'W1:CP-01', payload: { stationId: 'OTHER_STATION', operation: 'CODE' } };
   const denied = (await (await rpc(server, 'tools/call', { name: 'metropolis_work', arguments: args })).json()).result;
   assert.equal(denied.structuredContent.reason, 'DESTINATION_NOT_GRANTED');
   args.payload.stationId = 'FACTORY_STATION';
@@ -165,4 +165,5 @@ test('handoff cannot widen its destination or override its Work identity', async
   const accepted = (await (await rpc(server, 'tools/call', { name: 'metropolis_work', arguments: args })).json()).result;
   assert.equal(accepted.structuredContent.record.workId, 'W1');
   assert.equal(accepted.structuredContent.record.handoff.actor, 'GO');
+  assert.equal(Object.hasOwn(accepted.structuredContent.record.handoff, 'railId'), false);
 });

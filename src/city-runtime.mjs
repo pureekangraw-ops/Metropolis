@@ -52,13 +52,13 @@ export function createCityRuntime({ store = createMemoryStore(), clock = () => n
     return clone(record);
   }
 
-  async function handoff({ workId, checkpointId, stationId, railId, operation, actor = 'HERMES', payload = {} } = {}) {
+  async function handoff({ workId, checkpointId, stationId, operation, actor = 'HERMES', payload = {} } = {}) {
     const id = text(workId, 'workId');
     const record = await store.get(`work:${id}`);
     if (!record) throw new Error('WORK_NOT_FOUND');
     if (record.checkpointId !== text(checkpointId, 'checkpointId')) throw new Error('CHECKPOINT_MISMATCH');
     const now = clock();
-    const handoff = { handoffId: idFactory(), actor: text(actor, 'actor'), stationId: text(stationId, 'stationId'), railId: text(railId, 'railId'), operation: text(operation, 'operation'), payload: clone(payload), createdAt: now };
+    const handoff = { handoffId: idFactory(), actor: text(actor, 'actor'), stationId: text(stationId, 'stationId'), operation: text(operation, 'operation'), payload: clone(payload), createdAt: now };
     const next = { ...record, state: WORK_STATE.HANDED_OFF, handoff, history: [...record.history, { state: WORK_STATE.HANDED_OFF, at: now }], updatedAt: now };
     await store.put(`work:${id}`, next);
     return clone(next);
