@@ -24,3 +24,22 @@ Run `scripts/live-factory-e2e.mjs` with the existing `LIVE_E2E_WORK_ID`,
 generate replacement Work identities. It verifies only boundary handoff,
 receipt persistence, and correlated readback; it does not prove domain work
 completed or that Metropolis is hosted as a service.
+
+## Hall agent input and projection boundaries
+
+HERMES intake accepts only arrays of nonempty string input references; handoff
+payloads must be objects. MIMIR return evidence follows the same reference
+validation. Invalid input is rejected before any Work record changes.
+
+MIMIR's imported logic module now enforces its existing field grants in context
+packs and consumer projections. `fields: null` means unrestricted fields for an
+allowed consumer; `fields: []` permits none. Packs use the intersection of their
+accessible records' grants, including summaries, titles, record IDs, warnings,
+and evidence references. Route hints require permission for route evidence too.
+A denied consumer receives no source, evidence, route or record identity.
+
+Validation is covered by `test/hall-agents.test.mjs`. This is deterministic
+policy development, not model fine-tuning. The imported HERMES legacy Mission
+module still has unresolved legacy imports and is not wired into the MCP
+runtime; MIMIR's projection module is also not exposed as a live tool. These
+changes do not establish new authority, deployment or owner completion proof.
