@@ -41,13 +41,13 @@ export function createCityRuntime({ store = createMemoryStore(), clock = () => n
   if (!store || typeof store.get !== 'function' || typeof store.put !== 'function') throw new TypeError('store_REQUIRED');
   const mailboxes = new Map();
 
-  async function intake({ workId = idFactory(), ownerSystem, requestedBy = 'UNKNOWN', inputRefs = [] } = {}) {
+  async function intake({ workId = idFactory(), checkpointId, ownerSystem, requestedBy = 'UNKNOWN', inputRefs = [] } = {}) {
     const id = text(workId, 'workId');
     const owner = text(ownerSystem, 'ownerSystem');
     const existing = await store.get(`work:${id}`);
     if (existing) throw new Error('WORK_ALREADY_EXISTS');
     const now = clock();
-    const record = { kind: 'WORK_RECORD', workId: id, ownerSystem: owner, requestedBy: text(requestedBy, 'requestedBy'), state: WORK_STATE.RECEIVED, checkpointId: `${id}:CP-01`, inputRefs: [...inputRefs], handoff: null, return: null, history: [{ state: WORK_STATE.RECEIVED, at: now }], sourceSha, updatedAt: now };
+    const record = { kind: 'WORK_RECORD', workId: id, ownerSystem: owner, requestedBy: text(requestedBy, 'requestedBy'), state: WORK_STATE.RECEIVED, checkpointId: checkpointId == null ? `${id}:CP-01` : text(checkpointId, 'checkpointId'), inputRefs: [...inputRefs], handoff: null, return: null, history: [{ state: WORK_STATE.RECEIVED, at: now }], sourceSha, updatedAt: now };
     await store.put(`work:${id}`, record);
     return clone(record);
   }

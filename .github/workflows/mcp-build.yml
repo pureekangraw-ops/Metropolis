@@ -1,0 +1,17 @@
+name: MCP Worker bundle
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --test
+      - run: npx --yes wrangler@4 deploy --dry-run --outdir /tmp/metropolis-mcp-bundle
