@@ -56,6 +56,37 @@ test('old room receives current schemas without creating another session', async
   assert.deepEqual(current.tools.map(t => t.name), ['metropolis_identity', 'metropolis_arrive', 'metropolis_work']);
   assert.equal(current.refresh.transportNotificationSupported, false);
 });
+test('arrival refreshes schema and shows only authorized current Work pointers without creating Work', async () => {
+  const runtime = createCityRuntime();
+  await runtime.intake({ workId: 'W1', checkpointId: 'CP-LIVE', ownerSystem: 'FACTORY', requestedBy: 'GO', inputRefs: ['private://payload'] });
+  const server = service('one', runtime, [
+    { actor: 'GO', action: 'read', workId: 'W1' },
+    { actor: 'GO', action: 'intake', workId: 'W2', ownerSystem: 'FACTORY' },
+  ]);
+  const manifest = await arrive(server);
+  assert.equal(manifest.current.release.sourceSha, 'one');
+  assert.equal(manifest.current.schema.schemaHash, manifest.schemaHash);
+  assert.equal(manifest.current.schema.mode, 'FRESH_ON_ARRIVAL');
+  assert.equal(manifest.refresh.currentSnapshotIncluded, true);
+
+  const live = manifest.current.works.find(work => work.workId === 'W1');
+  assert.deepEqual(live.authorizedActions, ['read']);
+  assert.equal(live.present, true);
+  assert.equal(live.state, 'RECEIVED');
+  assert.equal(live.checkpointId, 'CP-LIVE');
+  assert.equal(live.ownerSystem, 'FACTORY');
+  assert.equal(Object.hasOwn(live, 'inputRefs'), false);
+
+  const pending = manifest.current.works.find(work => work.workId === 'W2');
+  assert.deepEqual(pending.authorizedActions, ['intake']);
+  assert.equal(pending.present, false);
+  assert.equal(pending.state, 'UNKNOWN');
+  assert.equal(await runtime.getWork('W2'), undefined);
+
+  const light = await arrive(server, 'light');
+  assert.deepEqual(light.current.works, []);
+});
+
 test('stale schema blocks writes and returns current station manifest', async () => {
   const store = createMemoryStore();
   const runtime = createCityRuntime({ store });
