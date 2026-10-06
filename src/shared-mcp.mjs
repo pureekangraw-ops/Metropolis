@@ -27,7 +27,7 @@ const tools = [
   {
     name: 'metropolis_arrive',
     title: 'Enter Metropolis',
-    description: 'GO/LIGHT arrival station. Read current release, schema hash, schemas and authorized actions on every arrival or refresh. No Work or authority is created.',
+    description: 'GO/LIGHT arrival station. Refresh the current release/schema and return authorized Work/Checkpoint pointers on every arrival or refresh. No Work or authority is created.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     securitySchemes: oauthSecurity,
@@ -68,8 +68,47 @@ function authChallenge(url) {
 export function createMetropolisMcp({ runtime, authenticate, grants = [], sourceSha = 'UNKNOWN', version = '1.0.0', allowedOrigins = [] } = {}) {
   if (!runtime || typeof authenticate !== 'function') throw new Error('RUNTIME_AUTHENTICATOR_REQUIRED');
   async function manifest(actor) {
-    const schemaHash = await hash(JSON.stringify({ tools, actionSchemas, version, sourceSha, actor, grants: grants.filter(g => g.actor === actor) }));
-    return { service: 'METROPOLIS', station: 'AGENT_ARRIVAL_STATION', actor, version, sourceSha, schemaHash, observedAt: new Date().toISOString(), tools, actionSchemas, authorizedActions: grants.filter(g => g.actor === actor), refresh: { mode: 'READ_CURRENT_ON_EVERY_CALL', transportNotificationSupported: false, clientReconnectMayBeRequired: true }, authorityCreated: false, workCreated: false };
+    const authorizedActions = grants.filter(g => g.actor === actor);
+    const schemaHash = await hash(JSON.stringify({ tools, actionSchemas, version, sourceSha, actor, grants: authorizedActions }));
+    const observedAt = new Date().toISOString();
+    const workIds = [...new Set(authorizedActions.map(grant => grant.workId))];
+    const works = await Promise.all(workIds.map(async workId => {
+      try {
+        const record = await runtime.getWork(workId);
+        if (!record) return { workId, present: false, state: 'UNKNOWN', checkpointId: null, ownerSystem: null, updatedAt: null, authorizedActions: authorizedActions.filter(grant => grant.workId === workId).map(grant => grant.action) };
+        return {
+          workId,
+          present: true,
+          state: record.state || 'UNKNOWN',
+          checkpointId: record.checkpointId || null,
+          ownerSystem: record.ownerSystem || null,
+          updatedAt: record.updatedAt || null,
+          authorizedActions: authorizedActions.filter(grant => grant.workId === workId).map(grant => grant.action),
+        };
+      } catch {
+        return { workId, present: null, state: 'UNKNOWN', checkpointId: null, ownerSystem: null, updatedAt: null, authorizedActions: authorizedActions.filter(grant => grant.workId === workId).map(grant => grant.action), reason: 'CURRENT_READ_FAILED' };
+      }
+    }));
+    return {
+      service: 'METROPOLIS',
+      station: 'AGENT_ARRIVAL_STATION',
+      actor,
+      version,
+      sourceSha,
+      schemaHash,
+      observedAt,
+      tools,
+      actionSchemas,
+      authorizedActions,
+      current: {
+        release: { version, sourceSha },
+        schema: { schemaHash, refreshedAt: observedAt, mode: 'FRESH_ON_ARRIVAL' },
+        works,
+      },
+      refresh: { mode: 'READ_CURRENT_ON_EVERY_CALL', transportNotificationSupported: false, clientReconnectMayBeRequired: true, currentSnapshotIncluded: true },
+      authorityCreated: false,
+      workCreated: false,
+    };
   }
   async function call(name, args, actor) {
     const current = await manifest(actor);
