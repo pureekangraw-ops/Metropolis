@@ -19,9 +19,10 @@ test('Rail Link has exactly two Station endpoints and one trust boundary', () =>
 test('Work identity remains stable across intake, handoff and return', async () => {
   const runtime = createCityRuntime({ store: createMemoryStore(), idFactory: (() => { let n = 0; return () => `ID-${++n}`; })(), clock: (() => { let n = 0; return () => `2026-10-06T00:00:0${n++}Z`; })() });
   const received = await runtime.intake({ workId: 'WORK-1', ownerSystem: 'FACTORY', requestedBy: 'GO' });
-  const handed = await runtime.handoff({ workId: 'WORK-1', checkpointId: received.checkpointId, stationId: 'FACTORY_STATION', railId: 'RAIL-MF', operation: 'EXECUTE' });
+  const handed = await runtime.handoff({ workId: 'WORK-1', checkpointId: received.checkpointId, stationId: 'FACTORY_STATION', operation: 'EXECUTE' });
   const returned = await runtime.returnWork({ workId: 'WORK-1', checkpointId: received.checkpointId, readback: { owner: 'FACTORY' }, evidenceRefs: ['evidence://1'], verified: true });
   assert.equal(handed.workId, 'WORK-1');
+  assert.equal(Object.hasOwn(handed.handoff, 'railId'), false);
   assert.equal(returned.workId, 'WORK-1');
   assert.equal(returned.state, WORK_STATE.RETURNED);
   assert.equal(returned.history.length, 3);
@@ -30,7 +31,7 @@ test('Work identity remains stable across intake, handoff and return', async () 
 test('wrong checkpoint never mutates the Work record', async () => {
   const runtime = createCityRuntime();
   const received = await runtime.intake({ workId: 'WORK-2', ownerSystem: 'FACTORY' });
-  await assert.rejects(() => runtime.handoff({ workId: 'WORK-2', checkpointId: 'wrong', stationId: 'FACTORY_STATION', railId: 'RAIL-MF', operation: 'EXECUTE' }), /CHECKPOINT_MISMATCH/);
+  await assert.rejects(() => runtime.handoff({ workId: 'WORK-2', checkpointId: 'wrong', stationId: 'FACTORY_STATION', operation: 'EXECUTE' }), /CHECKPOINT_MISMATCH/);
   assert.equal((await runtime.getWork('WORK-2')).state, WORK_STATE.RECEIVED);
   assert.equal(received.workId, 'WORK-2');
 });
