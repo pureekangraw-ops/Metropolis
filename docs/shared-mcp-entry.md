@@ -51,7 +51,7 @@ Example exact Work grants (replace the identity with the actual existing Work):
 ]
 ```
 
-Intake grants additionally require `ownerSystem`; handoff grants additionally require `stationId`, `railId` and `operation`. This entry does not import old Hub Work records automatically or resolve migration conflicts.
+Intake grants additionally require `ownerSystem`; handoff grants additionally require `stationId` and `operation`. The Station owns its Rail binding, so callers do not supply a Rail ID. This entry does not import old Hub Work records automatically or resolve migration conflicts.
 
 ## Acceptance before closing the old connection
 
