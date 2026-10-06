@@ -61,7 +61,9 @@ export function createGateway({ env, storage, sourceSha = SOURCE_SHA } = {}) {
     if (!configured) return json({ reason: 'METROPOLIS_MCP_NOT_CONFIGURED' }, 503);
     if (url.origin !== env.MCP_PUBLIC_ORIGIN) return json({ reason: 'ORIGIN_MISMATCH' }, 403);
     if (url.pathname.startsWith('/oauth/') || url.pathname.startsWith('/.well-known/')) {
-      if (request.headers.get('origin') && request.headers.get('origin') !== env.MCP_PUBLIC_ORIGIN) return json({ reason: 'ORIGIN_DENIED' }, 403);
+      // OAuth discovery and authorization endpoints are intentionally public.
+      // Identity and authority are still enforced by PKCE, client validation,
+      // owner authentication, token validation, scopes and Work grants.
       return oauth(request);
     }
     return service.fetch(request);
