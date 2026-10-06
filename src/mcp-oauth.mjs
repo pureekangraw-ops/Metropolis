@@ -405,9 +405,15 @@ export function createOAuthHandler(config = {}) {
 
     if (request.method === 'GET' && [
       '/.well-known/oauth-authorization-server',
+      '/.well-known/oauth-authorization-server/mcp',
       '/.well-known/oauth-protected-resource',
       '/.well-known/oauth-protected-resource/mcp',
-    ].includes(url.pathname)) return metadata(config, url.pathname);
+    ].includes(url.pathname)) return metadata(
+      config,
+      url.pathname === '/.well-known/oauth-authorization-server/mcp'
+        ? '/.well-known/oauth-authorization-server'
+        : url.pathname,
+    );
 
     try {
       if (url.pathname === '/oauth/authorize' && request.method === 'GET') {
