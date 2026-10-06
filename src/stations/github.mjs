@@ -58,37 +58,37 @@ export function createGitHubRailAdapter({ owner, repo, token = '', fetchImpl = f
     };
   }
 
-  async function dispatch({ oath }) {
-    if (oath.operation === 'READ_REPOSITORY') {
+  async function dispatch({ transport }) {
+    if (transport.operation === 'READ_REPOSITORY') {
       const result = await jsonRequest(fetchImpl, apiUrl(owner, repo), { token });
       if (!result.response.ok) throw new GitHubRailError('DESTINATION', `GITHUB_HTTP_${result.response.status}`, 'GitHub repository read failed');
       return { accepted: true, receiptId: `github:read:${owner}/${repo}:${now()}`, providerRef: apiUrl(owner, repo), response: result.json, acceptedAt: now() };
     }
-    if (oath.operation === 'CREATE_BRANCH') {
+    if (transport.operation === 'CREATE_BRANCH') {
       if (!token) throw new GitHubRailError('AUTH', 'GITHUB_TOKEN_REQUIRED', 'A credential is required for branch creation');
-      const branch = String(oath.payload?.branch || '').trim();
-      const fromSha = String(oath.payload?.fromSha || '').trim();
+      const branch = String(transport.payload?.branch || '').trim();
+      const fromSha = String(transport.payload?.fromSha || '').trim();
       if (!branch || !fromSha) throw new GitHubRailError('DESTINATION', 'BRANCH_INPUT_REQUIRED', 'branch and fromSha are required');
       const result = await jsonRequest(fetchImpl, `${apiUrl(owner, repo)}/git/refs`, { token, method: 'POST', body: { ref: `refs/heads/${branch}`, sha: fromSha } });
       if (result.response.status !== 201) throw new GitHubRailError('DESTINATION', `GITHUB_HTTP_${result.response.status}`, 'GitHub branch creation failed');
       return { accepted: true, receiptId: `github:branch:${owner}/${repo}:${branch}:${now()}`, providerRef: `${apiUrl(owner, repo)}/git/ref/heads/${branch}`, branch, fromSha, acceptedAt: now() };
     }
-    throw new GitHubRailError('DESTINATION', 'OPERATION_UNSUPPORTED', `Unsupported GitHub operation: ${oath.operation}`);
+    throw new GitHubRailError('DESTINATION', 'OPERATION_UNSUPPORTED', `Unsupported GitHub operation: ${transport.operation}`);
   }
 
   async function readback({ oath, receipt }) {
-    if (oath.operation === 'READ_REPOSITORY') {
+    if (transport.operation === 'READ_REPOSITORY') {
       const result = await jsonRequest(fetchImpl, apiUrl(owner, repo), { token });
       const verified = result.response.ok && result.json?.id === receipt.response?.id;
       return { verified, evidenceRef: verified ? receipt.providerRef : null, observedAt: now(), owner, repo };
     }
-    if (oath.operation === 'CREATE_BRANCH') {
+    if (transport.operation === 'CREATE_BRANCH') {
       const branch = receipt.branch;
       const result = await jsonRequest(fetchImpl, `${apiUrl(owner, repo)}/git/ref/heads/${encodeURIComponent(branch)}`, { token });
       const verified = result.response.ok && result.json?.object?.sha === receipt.fromSha;
       return { verified, evidenceRef: verified ? `${apiUrl(owner, repo)}/tree/${encodeURIComponent(branch)}` : null, observedAt: now(), branch, observedSha: result.json?.object?.sha || null };
     }
-    throw new GitHubRailError('READBACK', 'OPERATION_UNSUPPORTED', `Unsupported GitHub operation: ${oath.operation}`);
+    throw new GitHubRailError('READBACK', 'OPERATION_UNSUPPORTED', `Unsupported GitHub operation: ${transport.operation}`);
   }
 
   return Object.freeze({ probe, dispatch, readback });

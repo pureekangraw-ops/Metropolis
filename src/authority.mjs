@@ -3,7 +3,7 @@ function value(value, name) {
   return value.trim();
 }
 
-export function createAuthorityGate(grants = []) {
+export function createAuthorityBoundary(grants = []) {
   const normalized = grants.map((grant) => Object.freeze({
     actor: value(grant.actor, 'grant.actor'),
     stationId: value(grant.stationId, 'grant.stationId'),

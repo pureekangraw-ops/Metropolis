@@ -9,7 +9,7 @@ export const METROPOLIS_ROLES = Object.freeze({
   WORK_SYSTEM: 'work_identity_lifecycle_continuity',
   STATION: 'connection_point_one_rail',
   RAIL: 'owner_connection_one_station',
-  OATH: 'transport',
+  TRANSPORT: 'transport',
   MIMIR: 'return_organization_index',
   OWNER_SYSTEM: 'domain_operation',
   DATA_MANAGEMENT: 'durable_information_evidence_lineage',
@@ -71,12 +71,12 @@ export function createRail(input = {}) {
   });
 }
 
-export function createOathEnvelope(input = {}) {
+export function createTransportEnvelope(input = {}) {
   const payload = input.payload == null ? {} : plainObject(input.payload, 'payload');
   return Object.freeze({
-    kind: 'OATH',
+    kind: 'TRANSPORT',
     contractVersion: METROPOLIS_CONTRACT_VERSION,
-    oathId: requiredString(input.oathId, 'oathId'),
+    transportId: requiredString(input.transportId, 'transportId'),
     workId: requiredString(input.workId, 'workId'),
     stationId: requiredString(input.stationId, 'stationId'),
     railId: requiredString(input.railId, 'railId'),

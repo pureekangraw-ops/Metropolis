@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   METROPOLIS_ROLES,
-  createOathEnvelope,
+  createTransportEnvelope,
   createRail,
   createStation,
   createWorkIdentity,
@@ -48,9 +48,9 @@ test('one Station owns exactly one Rail and its credential boundary', () => {
   assert.equal(Object.hasOwn(rail, 'credentialRef'), false);
 });
 
-test('OATH transports over the Station/Rail pair without selecting authority', () => {
-  const oath = createOathEnvelope({
-    oathId: 'OATH-1',
+test('TRANSPORT transports over the Station/Rail pair without selecting authority', () => {
+  const transport = createTransportEnvelope({
+    transportId: 'TRANSPORT-1',
     workId: 'WORK-1',
     stationId: 'STATION-FACTORY',
     railId: 'RAIL-FACTORY',
@@ -58,10 +58,10 @@ test('OATH transports over the Station/Rail pair without selecting authority', (
     payload: {},
     requestedAt: '2026-10-05T00:00:00Z',
   });
-  assert.equal(oath.kind, 'OATH');
-  assert.equal(oath.stationId, 'STATION-FACTORY');
-  assert.equal(oath.railId, 'RAIL-FACTORY');
-  assert.equal(Object.hasOwn(oath, 'authority'), false);
+  assert.equal(transport.kind, 'TRANSPORT');
+  assert.equal(transport.stationId, 'STATION-FACTORY');
+  assert.equal(transport.railId, 'RAIL-FACTORY');
+  assert.equal(Object.hasOwn(transport, 'authority'), false);
 });
 
 test('Station rejects raw credentials', () => {
