@@ -131,10 +131,17 @@ test('HERMES creates Work ID only after INPUT → DRAFT → REVIEW → READY TO 
   assert.match(created.structuredContent.result.workId, /^WORK-/);
   assert.match(created.structuredContent.result.checkpointId, /:CP-01$/);
   assert.equal(created.structuredContent.result.work.intakeDraftId, draftId);
+  assert.equal(created.structuredContent.result.work.workPass.kind, 'WORK_PASS');
+  assert.equal(created.structuredContent.result.work.workPass.version, 'WORK_PASS_V1');
+  assert.equal(created.structuredContent.result.work.workPass.actor, 'GO');
+  assert.equal(created.structuredContent.result.work.workPass.status, 'ACTIVE');
+  assert.equal(created.structuredContent.result.work.workPass.workId, created.structuredContent.result.workId);
+  assert.equal(created.structuredContent.result.work.workPass.checkpointId, created.structuredContent.result.checkpointId);
+  assert.equal(created.structuredContent.result.work.workPassRef, `work-pass://${created.structuredContent.result.work.workPass.passId}`);
   assert.equal(created.structuredContent.result.go, true);
 });
 
-test('HERMES-created GO Work gets server-derived access without manual grants', async () => {
+test('HERMES-created GO Work gets persisted Work Pass access without manual grants', async () => {
   const runtime = createCityRuntime({ store: createMemoryStore() });
   const server = service('derived', runtime, []);
 
@@ -157,7 +164,8 @@ test('HERMES-created GO Work gets server-derived access without manual grants', 
   const manifest = await arrive(server);
   const pointer = manifest.current.works.find(work => work.workId === workId);
   assert.ok(pointer);
-  assert.equal(pointer.accessSource, 'SERVER_DERIVED_REQUESTER');
+  assert.equal(pointer.accessSource, 'PERSISTED_WORK_PASS');
+  assert.equal(pointer.workPassRef, created.structuredContent.result.work.workPassRef);
   assert.deepEqual(pointer.authorizedActions, ['read', 'handoff', 'return']);
 
   const read = (await (await rpc(server, 'tools/call', {
@@ -180,6 +188,113 @@ test('HERMES-created GO Work gets server-derived access without manual grants', 
   }, 'light')).json()).result;
   assert.equal(lightRead.isError, true);
   assert.equal(lightRead.structuredContent.reason, 'NO_GRANT');
+});
+
+
+test('requestedBy metadata alone never creates Work authority', async () => {
+  const runtime = createCityRuntime({ store: createMemoryStore() });
+  await runtime.intake({
+    workId: 'WORK-NO-PASS',
+    ownerSystem: 'PRISM',
+    requestedBy: 'GO',
+  });
+  const record = await runtime.getWork('WORK-NO-PASS');
+  assert.equal(record.requestedBy, 'GO');
+  assert.equal(record.workPass, null);
+  assert.equal(record.workPassRef, null);
+
+  const server = service('no-pass', runtime, []);
+  const reply = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_work',
+    arguments: { action: 'read', workId: 'WORK-NO-PASS' },
+  })).json()).result;
+  assert.equal(reply.isError, true);
+  assert.equal(reply.structuredContent.reason, 'NO_GRANT');
+});
+
+test('Work Pass preserves identity on handoff and caller cannot replace its pass reference', async () => {
+  const runtime = createCityRuntime({ store: createMemoryStore() });
+  const created = await runtime.intake({
+    workId: 'WORK-PASS-HANDOFF',
+    checkpointId: 'WORK-PASS-HANDOFF:CP-01',
+    ownerSystem: 'PRISM',
+    requestedBy: 'GO',
+    workPassActor: 'GO',
+  });
+  const server = service('pass-handoff', runtime, []);
+  const spoofed = 'work-pass://ATTACKER';
+
+  const reply = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_work',
+    arguments: {
+      action: 'handoff',
+      workId: created.workId,
+      payload: {
+        stationId: 'FACTORY_STATION',
+        operation: 'CODE',
+        payload: {
+          workId: 'WORK-OTHER',
+          checkpointId: 'WORK-OTHER:CP-99',
+          workPassRef: spoofed,
+        },
+      },
+    },
+  })).json()).result;
+
+  assert.equal(reply.isError, false);
+  assert.equal(reply.structuredContent.record.workId, created.workId);
+  assert.equal(reply.structuredContent.record.checkpointId, created.checkpointId);
+  assert.equal(reply.structuredContent.record.handoff.workPassRef, created.workPassRef);
+  assert.equal(reply.structuredContent.record.handoff.payload.workPassRef, created.workPassRef);
+  assert.notEqual(reply.structuredContent.record.handoff.payload.workPassRef, spoofed);
+});
+
+test('CANCEL makes persisted Work Pass read-only and blocks operational actions', async () => {
+  const runtime = createCityRuntime({ store: createMemoryStore() });
+  const server = service('cancel-pass', runtime, []);
+
+  const input = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_reception',
+    arguments: {
+      action: 'input_information',
+      payload: { information: { title: 'Cancelable pass work' }, ownerSystem: 'PRISM' },
+    },
+  })).json()).result;
+  const draftId = input.structuredContent.result.draftId;
+  await rpc(server, 'tools/call', { name: 'metropolis_reception', arguments: { action: 'review', draftId, payload: {} } });
+  await rpc(server, 'tools/call', { name: 'metropolis_reception', arguments: { action: 'ready_to_create', draftId, payload: {} } });
+  const created = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_reception',
+    arguments: { action: 'create_work', draftId, payload: {} },
+  })).json()).result;
+  const workId = created.structuredContent.result.workId;
+
+  const cancelled = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_reception',
+    arguments: { action: 'cancel', payload: { targetKind: 'WORK', targetId: workId } },
+  })).json()).result;
+  assert.equal(cancelled.isError, false);
+  assert.equal(cancelled.structuredContent.result.work.workPass.status, 'CANCELLED');
+
+  const read = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_work',
+    arguments: { action: 'read', workId },
+  })).json()).result;
+  assert.equal(read.isError, false);
+
+  const handoff = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_work',
+    arguments: { action: 'handoff', workId, payload: { stationId: 'FACTORY_STATION', operation: 'CODE' } },
+  })).json()).result;
+  assert.equal(handoff.isError, true);
+  assert.equal(handoff.structuredContent.reason, 'NO_GRANT');
+
+  const returned = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_work',
+    arguments: { action: 'return', workId, payload: {} },
+  })).json()).result;
+  assert.equal(returned.isError, true);
+  assert.equal(returned.structuredContent.reason, 'NO_GRANT');
 });
 
 test('READY TO RESUME gates SEARCH then resumes the existing Work ID and checkpoint', async () => {
