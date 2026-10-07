@@ -14,7 +14,7 @@ jobs:
         run: |
           set -euo pipefail
           BASE="https://metropolis.pureekangraw.workers.dev"
-          EXPECTED_SHA="c703a1fad68e057efc898e918d4b90cccd32e027"
+          EXPECTED_SHA="8c1827face47404903c5e78970a5c6c4e8d38dff"
           CLIENT_ID="https://chatgpt.com/oauth/client.json"
           REDIRECT="https://chatgpt.com/connector_platform_oauth_redirect"
           CHALLENGE="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
