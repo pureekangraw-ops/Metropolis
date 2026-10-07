@@ -20,12 +20,14 @@ test('Work identity remains stable across intake, handoff and return', async () 
   const runtime = createCityRuntime({ store: createMemoryStore(), idFactory: (() => { let n = 0; return () => `ID-${++n}`; })(), clock: (() => { let n = 0; return () => `2026-10-06T00:00:0${n++}Z`; })() });
   const received = await runtime.intake({ workId: 'WORK-1', ownerSystem: 'FACTORY', requestedBy: 'GO' });
   const handed = await runtime.handoff({ workId: 'WORK-1', checkpointId: received.checkpointId, stationId: 'FACTORY_STATION', operation: 'EXECUTE' });
-  const returned = await runtime.returnWork({ workId: 'WORK-1', checkpointId: received.checkpointId, readback: { owner: 'FACTORY' }, evidenceRefs: ['evidence://1'], verified: true });
+  const returned = await runtime.returnWork({ workId: 'WORK-1', checkpointId: received.checkpointId, readback: { owner: 'FACTORY' }, evidenceRefs: ['evidence://1'], confirmation: 'CONFIRM_RETURN', verified: true });
   assert.equal(handed.workId, 'WORK-1');
   assert.equal(Object.hasOwn(handed.handoff, 'railId'), false);
   assert.equal(returned.workId, 'WORK-1');
   assert.equal(returned.state, WORK_STATE.RETURNED);
   assert.equal(returned.history.length, 3);
+  assert.equal(returned.returnReview.status, 'CONFIRMED');
+  assert.equal(returned.dataLifecycle.some(entry => entry.producer === 'MIMIR'), true);
 });
 
 test('wrong checkpoint never mutates the Work record', async () => {
