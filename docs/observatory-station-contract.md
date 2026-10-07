@@ -142,3 +142,54 @@ mailbox acceptance or native receipt with verified business success.
 System map and station plan include OBSERVATORY_STATION, OBSERVATORY destination
 and RAIL_OBSERVATORY, using the existing durable runtime binding. No new OAuth
 client, passcode, environment wildcard grant, Worker or backend is introduced.
+
+## Durable storage and real Post Office delivery
+
+Storage version 2 separates device authentication metadata, view mailbox indexes,
+current snapshot payload, each command payload, each native receipt payload,
+each entry's correlation metadata, and each DATA_CARGO envelope into separate
+keys. No device/session value embeds all commands or receipts. Every value is
+checked below 64 KiB, safely below the SQLite Durable Object 2 MiB value limit.
+Each view retains at most 100 entries and 8 MiB of command/receipt JSON. Entries
+older than 24 hours are dropped on load and removed on the next mailbox save;
+every save removes evicted command, receipt, entry and cargo keys. Current
+snapshot/cargo use fixed keys. Stop/disconnect/re-pair remove previous payloads.
+Save operations use the existing durable storage transaction, and cargo failure
+rolls back incomplete payload/index updates. Legacy aggregate sessions fail
+closed until explicit owner re-pair.
+
+Each browser/map view has persisted inbox/outbox MAILBOX records from the existing
+`createMailbox` contract, with OPEN/CLOSED state and monotonic cargo sequence.
+Snapshot, command and receipt publication persist the payload first, then use the
+existing `createCargoEnvelope` and `deliverCargo` functions to create actual
+DATA_CARGO and DELIVERY_RECEIPT identities. `payloadRef` is the real durable key
+for that payload. Receiver is the selected OAuth actor for snapshot/native
+receipt inbox delivery and `OBSERVATORY_DEVICE:<UUID>` for command outbox delivery.
+Persisted rail uses the existing `createRailLink` contract between
+METROPOLIS_STATION/METROPOLIS and OBSERVATORY_STATION/OBSERVATORY, rail ID
+RAIL_OBSERVATORY, owner-paired device trust boundary. Each cargo records the
+actual station, rail, view, device, Work and checkpoint route.
+
+Post Office DELIVERED means delivery into the durable mailbox after payload
+persistence. It does **not** assert Android polling, execution or owner/business
+success. `deliveryBoundary` is DURABLE_MAILBOX and ownerExecutionVerified is
+false. Station results expose the actual cargo/delivery receipt records under
+postOffice, preserving queue acceptance versus native receipt versus after-capture
+verification as separate evidence.
+
+After-snapshot verification additionally requires afterCaptureId distinct from
+commanded captureId and current snapshot sequence strictly greater than the
+capture sequence persisted when the command was accepted. Equal timestamps are
+allowed only with this distinct, strictly subsequent capture evidence.
+
+Command polling returns at most 16 envelopes and at most 60 KiB of encoded JSON
+per response, within the native 64 KiB transport ceiling. All 100 queued entries
+remain durable; terminal ACKs let subsequent polls advance through the backlog.
+A valid 8 KiB command cannot be starved by the byte ceiling.
+
+Authentication and grants read only device metadata first. Invalid bearer tokens
+never read command, receipt or snapshot payloads. Grant discovery filters the
+owner-selected actor before reading actual Work context; it never hydrates view
+mailboxes. Correct actor/device/context/scope checks precede hydration of the
+single view required by the operation. Saving or stopping one view preserves the
+other view without reading its payloads.

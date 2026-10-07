@@ -3,6 +3,7 @@ import { createMetropolisMcp, json } from './shared-mcp.mjs';
 import { createOAuthHandler, verifyAccessToken } from './mcp-oauth.mjs';
 import { createObservatory } from './observatory.mjs';
 import { SOURCE_SHA } from './mcp-source-identity.mjs';
+import { createFactoryStationRuntime } from './factory-station-runtime.mjs';
 
 export async function bufferRequest(request, { timeoutMs = 10000, maxBytes = 65536 } = {}) {
   if (!request.body) return request;
@@ -72,7 +73,15 @@ export function createGateway({ env, storage, sourceSha = SOURCE_SHA } = {}) {
     const cfg = configFor(env, storage);
     const grants = JSON.parse(env.MCP_WORK_GRANTS || '[]');
     if (!Array.isArray(grants) || grants.some(g => !['GO', 'LIGHT'].includes(g.actor) || !['read', 'intake', 'handoff', 'return'].includes(g.action) || !g.workId || g.workId === '*')) throw new Error('EXPLICIT_WORK_GRANTS_REQUIRED');
-    const runtime = createCityRuntime({ sourceSha, store: { get: key => storage.get(key), async put(key, value) { await storage.put(key, value); return value; } } });
+    const factoryStation = createFactoryStationRuntime({
+      baseUrl: env.FACTORY_RUNTIME_URL,
+      sharedSecret: env.METROPOLIS_FACTORY_SHARED_SECRET,
+    });
+    const runtime = createCityRuntime({
+      sourceSha,
+      store: { get: key => storage.get(key), async put(key, value) { await storage.put(key, value); return value; } },
+      stationRuntimes: { FACTORY_STATION: factoryStation },
+    });
     observatory = createObservatory({ env, storage, runtime });
     oauth = createOAuthHandler(cfg);
     resourceMetadataUrl = cfg.issuer + '/.well-known/oauth-protected-resource';
