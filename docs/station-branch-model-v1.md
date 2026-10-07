@@ -1,6 +1,6 @@
 # Station Branch Model v1
 
-**Status:** candidate lock; lock after exact-head CI and golden-path acceptance pass.
+**Status:** LOCKED — v1.0.0 after exact-head CI and golden-path acceptance pass.
 
 A Branch is **Station Core + Branch Profile**.
 
@@ -25,3 +25,8 @@ PIXIE is the canonical manager of transit data lifecycle (`CURRENT -> SUPERSEDED
 The Station owns the return prompt. MIMIR does not ask “any update?” again; it organizes the packet GO reviewed. Work CANCEL and COMPLETE belong to MIMIR and immediately remove Work from ONLINE.
 
 Factory/DWARF is the first Branch Profile: Factory health is preflight and DWARF verify is return inspection. Future Drive, Notion, Mail, Observatory, Mirror, Greenhouse and other Branches copy Station Core and provide only their profile, adapter/Rail, credential boundary and destination acceptance checks.
+
+
+## Lock rule
+
+Station Branch Model v1 is locked. New Branches must reuse the Station Core contract and may vary only through Branch Profile, adapter/Rail, credential boundary, and destination-specific acceptance behavior. Changes to the locked core require evidence of a failing invariant or a new explicit architecture decision; convenience alone is not a reason to fork the core flow.

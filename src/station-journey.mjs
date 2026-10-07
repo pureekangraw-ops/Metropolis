@@ -1,3 +1,5 @@
+export const STATION_BRANCH_MODEL_VERSION='1.0.0';
+export const STATION_BRANCH_MODEL_STATUS='LOCKED';
 export const STATION_JOURNEY_SCHEMA='STATION_JOURNEY_V1'; export const STATION_JOURNEY_STATUS=Object.freeze({IN_TRANSIT:'IN_TRANSIT',RETURNED:'RETURNED'});
 const text=value=>String(value??'').trim(); const clone=value=>value==null?value:structuredClone(value); const unique=values=>[...new Set((Array.isArray(values)?values:[]).map(text).filter(Boolean))];
 export function normalizeJourneyBaggage(value={}){const s=value&&typeof value==='object'&&!Array.isArray(value)?value:{};return Object.freeze({payloadRefs:Object.freeze(unique(s.payloadRefs||s.inputRefs||[])),artifactRefs:Object.freeze(unique(s.artifactRefs||[])),evidenceRefs:Object.freeze(unique(s.evidenceRefs||[])),receiptRefs:Object.freeze(unique(s.receiptRefs||[]))});}

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createCityRuntime,createMemoryStore,WORK_STATE} from '../src/city-runtime.mjs';
+import {STATION_BRANCH_MODEL_VERSION,STATION_BRANCH_MODEL_STATUS} from '../src/station-journey.mjs';
 function factoryBranchRuntime(){return{
   profile:{branchId:'FACTORY_BRANCH',stationId:'FACTORY_STATION',destinationId:'FACTORY',preflight:'FACTORY_HEALTH',returnInspection:'DWARF_VERIFY'},
   async handoff({workId,checkpointId,payload}){return{accepted:true,verified:true,receiptId:'FACTORY-R1',evidenceRef:'factory://handoff/R1',workId,checkpointId,journeyId:payload.journeyId};},
@@ -26,4 +27,10 @@ test('HERMES resume re-announces the same Work online and Journey ID is searchab
  const sent=await runtime.handoff({workId:created.workId,checkpointId:created.checkpointId,stationId:'FACTORY_STATION',operation:'TEST',actor:'GO'});
  const resumed=await runtime.resumeWork({workId:created.workId,actor:'GO'});
  assert.equal(resumed.workId,created.workId); assert.equal(resumed.checkpointId,created.checkpointId); assert.equal(resumed.online.activation,'RESUME'); assert.equal(sent.journeys[0].journeyId,'WORK-RECOVER:JOURNEY:1');
+});
+
+
+test('Station Branch Model v1 is locked after golden-path acceptance',()=>{
+  assert.equal(STATION_BRANCH_MODEL_VERSION,'1.0.0');
+  assert.equal(STATION_BRANCH_MODEL_STATUS,'LOCKED');
 });
