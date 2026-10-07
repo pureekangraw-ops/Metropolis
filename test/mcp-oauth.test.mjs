@@ -57,3 +57,20 @@ test('resource discovery exposes shared Metropolis scopes', async () => {
   assert.equal(response.status, 200);
   assert.deepEqual((await response.json()).scopes_supported, ['metropolis-go']);
 });
+
+test('authorize returns a safe invalid-client code without exposing request values', async () => {
+  const cfg = config(), handler = createOAuthHandler(cfg);
+  const response = await handler(new Request(issuer + '/oauth/authorize?' + new URLSearchParams({
+    response_type: 'code',
+    client_id: 'unknown-client',
+    redirect_uri: cfg.redirectUri,
+    code_challenge: challenge,
+    code_challenge_method: 'S256',
+    resource: cfg.resource,
+    scope: 'metropolis-go',
+  })));
+  assert.equal(response.status, 400);
+  const body = await response.json();
+  assert.deepEqual(body, { code: 'OAUTH_INVALID_CLIENT' });
+  assert.equal(JSON.stringify(body).includes('unknown-client'), false);
+});
