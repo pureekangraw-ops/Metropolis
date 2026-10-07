@@ -10,6 +10,7 @@ import { prepareMimirReturn } from './agents/mimir/return-desk.mjs';
 import { rotateHallData } from './secretary/product-life-cycle.mjs';
 import { createPixieReport } from './pixie/report-router.mjs';
 import { createHermesIntakeDesk } from './agents/hermes/intake-desk.mjs';
+import { cancelWorkPass, createWorkPass, workPassRef } from './work-pass.mjs';
 
 export const CITY_COMPONENTS = Object.freeze(['METROPOLIS', 'CITY_HALL', 'WORK_SYSTEM', 'POST_OFFICE', 'PIXIE_SERVICE', 'SHOP', 'SPECTRUMSALE', 'THE_TAILOR']);
 export const WORK_STATE = Object.freeze({ RECEIVED: 'RECEIVED', HANDED_OFF: 'HANDED_OFF', RETURNED: 'RETURNED', CANCELLED: 'CANCELLED', UNKNOWN: 'UNKNOWN' });
@@ -53,13 +54,19 @@ export function createCityRuntime({ store = createMemoryStore(), clock = () => n
   const mailboxes = new Map();
   const stations = Object.freeze({ ...stationRuntimes });
 
-  async function intake({ workId = idFactory(), checkpointId, ownerSystem, requestedBy = 'UNKNOWN', inputRefs = [], intakeDraftId = null, intakeInformation = {} } = {}) {
+  async function intake({ workId = idFactory(), checkpointId, ownerSystem, requestedBy = 'UNKNOWN', workPassActor = null, inputRefs = [], intakeDraftId = null, intakeInformation = {} } = {}) {
     const id = text(workId, 'workId');
     const owner = text(ownerSystem, 'ownerSystem');
     const existing = await store.get(`work:${id}`);
     if (existing) throw new Error('WORK_ALREADY_EXISTS');
     const now = clock();
     const cp = checkpointId == null ? `${id}:CP-01` : text(checkpointId, 'checkpointId');
+    const pass = workPassActor == null ? null : createWorkPass({
+      workId: id,
+      checkpointId: cp,
+      actor: text(workPassActor, 'workPassActor'),
+      issuedAt: now,
+    });
     const dataLifecycle = rotateHallData([], {
       dataId: `${id}:DATA:COUNTER:1`,
       workId: id,
@@ -90,6 +97,8 @@ export function createCityRuntime({ store = createMemoryStore(), clock = () => n
       return: null,
       reports: [],
       dataLifecycle,
+      workPass: clone(pass),
+      workPassRef: workPassRef(pass),
       tablet: null,
       history: [{ state: WORK_STATE.RECEIVED, at: now }],
       sourceSha,
@@ -127,11 +136,13 @@ export function createCityRuntime({ store = createMemoryStore(), clock = () => n
     const station = text(stationId, 'stationId');
     const op = text(operation, 'operation');
     const stationRuntime = stations[station];
+    const passRef = workPassRef(record.workPass);
+    const transportPayload = { ...clone(payload), workPassRef: passRef };
     const external = stationRuntime?.handoff
-      ? await stationRuntime.handoff({ workId: id, checkpointId: record.checkpointId, stationId: station, operation: op, actor, payload: clone(payload) })
+      ? await stationRuntime.handoff({ workId: id, checkpointId: record.checkpointId, stationId: station, operation: op, actor, payload: transportPayload })
       : null;
     const now = clock();
-    const handoff = { handoffId: idFactory(), actor: text(actor, 'actor'), stationId: station, operation: op, payload: clone(payload), external: clone(external), createdAt: now };
+    const handoff = { handoffId: idFactory(), actor: text(actor, 'actor'), stationId: station, operation: op, payload: transportPayload, workPassRef: passRef, external: clone(external), createdAt: now };
     let reports = [...(record.reports || [])];
     let dataLifecycle = [...(record.dataLifecycle || [])];
     if (external) {
@@ -378,6 +389,7 @@ export function createCityRuntime({ store = createMemoryStore(), clock = () => n
     const next = {
       ...record,
       state: WORK_STATE.CANCELLED,
+      workPass: cancelWorkPass(record.workPass, { cancelledAt: now, cancelledBy: text(actor, 'actor') }),
       cancellation: {
         actor: text(actor, 'actor'),
         cancelledAt: now,
