@@ -51,3 +51,30 @@ export function createPixieReport({
     authorityTransferred: false,
   });
 }
+
+
+export function createPixieStationDiagnostic({
+  diagnosticId, workId, checkpointId, journeyId, stationId,
+  before = {}, after = {}, unreadableRefs = [], observedAt = new Date().toISOString(),
+} = {}) {
+  const id = text(diagnosticId);
+  if (!id) throw new Error('DIAGNOSTIC_ID_REQUIRED');
+  const keys = ['payloadRefs', 'artifactRefs', 'evidenceRefs', 'receiptRefs'];
+  const normalize = value => Object.fromEntries(keys.map(key => [key, unique(value?.[key] || [])]));
+  const rawAfter = Object.fromEntries(keys.map(key => [key, Array.isArray(after?.[key]) ? after[key].map(text).filter(Boolean) : []]));
+  const a = normalize(after);
+  const b = normalize(before);
+  const added = Object.fromEntries(keys.map(key => [key, a[key].filter(ref => !b[key].includes(ref))]));
+  const duplicates = Object.fromEntries(keys.map(key => [key, rawAfter[key].filter((ref,index,all)=>all.indexOf(ref)!==index)]));
+  const counts = Object.fromEntries(keys.map(key => [key, a[key].length]));
+  const unknowns = unique(unreadableRefs);
+  return Object.freeze({
+    schema:'PIXIE_STATION_DIAGNOSTIC_V1', diagnosticId:id,
+    workId:text(workId)||null, checkpointId:text(checkpointId)||null, journeyId:text(journeyId)||null, stationId:text(stationId)||null,
+    status:unknowns.length?'CHECKED_WITH_UNKNOWNS':'CHECKED',
+    counts:Object.freeze(counts),
+    added:Object.freeze(Object.fromEntries(keys.map(key=>[key,Object.freeze(added[key])]))),
+    duplicates:Object.freeze(Object.fromEntries(keys.map(key=>[key,Object.freeze(unique(duplicates[key]))]))),
+    unreadableRefs:Object.freeze(unknowns), mayApprove:false, mayRewriteSourceTruth:false, observedAt,
+  });
+}

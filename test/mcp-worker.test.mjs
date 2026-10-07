@@ -5,7 +5,18 @@ import { createTestAccessToken } from '../src/mcp-oauth.mjs';
 const origin = 'https://city.example';
 function storage() {
   const data = new Map();
-  return { async get(k) { return structuredClone(data.get(k)); }, async put(k, v) { data.set(k, structuredClone(v)); }, async transaction(fn) { return fn(this); } };
+  return {
+    async get(k) { return structuredClone(data.get(k)); },
+    async put(k, v) { data.set(k, structuredClone(v)); },
+    async list({ prefix = '' } = {}) {
+      return new Map(
+        [...data.entries()]
+          .filter(([key]) => String(key).startsWith(prefix))
+          .map(([key, value]) => [key, structuredClone(value)]),
+      );
+    },
+    async transaction(fn) { return fn(this); },
+  };
 }
 const env = { MCP_PUBLIC_ORIGIN: origin, MCP_OAUTH_SIGNING_KEY: 'test-only-signing', MCP_OWNER_PASSCODE: 'test-only-owner', MCP_OAUTH_CLIENTS: JSON.stringify([{ clientId: 'go', clientSecret: 'test-secret-go', subject: 'GO', scope: 'metropolis-go', redirectUris: ['https://client.example/go'] }, { clientId: 'light', clientSecret: 'test-secret-light', subject: 'LIGHT', scope: 'metropolis-light', redirectUris: ['https://client.example/light'] }]), MCP_WORK_GRANTS: JSON.stringify([{ actor: 'GO', action: 'read', workId: 'W' }]) };
 async function call(gateway, name, args, subject = 'GO') {
@@ -42,9 +53,14 @@ test('Work created by HERMES survives a fresh gateway on the same durable storag
 
   const nextEnv = {
     ...env,
-    MCP_WORK_GRANTS: JSON.stringify([{ actor: 'GO', action: 'read', workId }]),
+    MCP_WORK_GRANTS: '[]',
   };
   const next = createGateway({ env: nextEnv, storage: durable, sourceSha: 'a'.repeat(40) });
+  const arrived = await call(next, 'metropolis_arrive', {});
+  const pointer = arrived.body.result.structuredContent.current.works.find(work => work.workId === workId);
+  assert.equal(pointer.accessSource, 'PERSISTED_WORK_PASS');
+  assert.deepEqual(pointer.authorizedActions, ['read', 'handoff', 'return', 'cancel', 'complete']);
+
   const read = await call(next, 'metropolis_work', { action: 'read', workId });
   assert.equal(read.body.result.isError, false);
   assert.equal(read.body.result.structuredContent.record.checkpointId, checkpointId);
