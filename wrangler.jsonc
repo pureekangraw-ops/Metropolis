@@ -11,6 +11,7 @@
   "previews": {},
   "vars": {
     "MCP_PUBLIC_ORIGIN": "https://metropolis.pureekangraw.workers.dev",
+    "FACTORY_RUNTIME_URL": "https://factory-district.pureekangraw.workers.dev",
     "MCP_WORK_GRANTS": "[]",
     "MCP_ALLOWED_ORIGINS": "[]"
   }

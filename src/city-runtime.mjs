@@ -37,9 +37,10 @@ export function createCityMap() {
   });
 }
 
-export function createCityRuntime({ store = createMemoryStore(), clock = () => new Date().toISOString(), idFactory = () => crypto.randomUUID(), sourceSha = 'UNKNOWN' } = {}) {
+export function createCityRuntime({ store = createMemoryStore(), clock = () => new Date().toISOString(), idFactory = () => crypto.randomUUID(), sourceSha = 'UNKNOWN', stationRuntimes = {} } = {}) {
   if (!store || typeof store.get !== 'function' || typeof store.put !== 'function') throw new TypeError('store_REQUIRED');
   const mailboxes = new Map();
+  const stations = Object.freeze({ ...stationRuntimes });
 
   async function intake({ workId = idFactory(), checkpointId, ownerSystem, requestedBy = 'UNKNOWN', inputRefs = [] } = {}) {
     const id = text(workId, 'workId');
@@ -57,8 +58,14 @@ export function createCityRuntime({ store = createMemoryStore(), clock = () => n
     const record = await store.get(`work:${id}`);
     if (!record) throw new Error('WORK_NOT_FOUND');
     if (record.checkpointId !== text(checkpointId, 'checkpointId')) throw new Error('CHECKPOINT_MISMATCH');
+    const station = text(stationId, 'stationId');
+    const op = text(operation, 'operation');
+    const stationRuntime = stations[station];
+    const external = stationRuntime?.handoff
+      ? await stationRuntime.handoff({ workId: id, checkpointId: record.checkpointId, stationId: station, operation: op, actor, payload: clone(payload) })
+      : null;
     const now = clock();
-    const handoff = { handoffId: idFactory(), actor: text(actor, 'actor'), stationId: text(stationId, 'stationId'), operation: text(operation, 'operation'), payload: clone(payload), createdAt: now };
+    const handoff = { handoffId: idFactory(), actor: text(actor, 'actor'), stationId: station, operation: op, payload: clone(payload), external: clone(external), createdAt: now };
     const next = { ...record, state: WORK_STATE.HANDED_OFF, handoff, history: [...record.history, { state: WORK_STATE.HANDED_OFF, at: now }], updatedAt: now };
     await store.put(`work:${id}`, next);
     return clone(next);
@@ -69,9 +76,30 @@ export function createCityRuntime({ store = createMemoryStore(), clock = () => n
     const record = await store.get(`work:${id}`);
     if (!record) throw new Error('WORK_NOT_FOUND');
     if (record.checkpointId !== text(checkpointId, 'checkpointId')) throw new Error('CHECKPOINT_MISMATCH');
+    const stationRuntime = stations[record.handoff?.stationId];
+    let trustedReadback = null;
+    let trustedVerified = verified === true;
+    const trustedEvidence = [...evidenceRefs];
+    if (stationRuntime?.readback && record.handoff?.external) {
+      trustedReadback = await stationRuntime.readback({ workId: id, checkpointId: record.checkpointId, handoff: clone(record.handoff) });
+      trustedVerified = trustedReadback?.verified === true && trustedReadback?.domainVerified === true;
+      if (trustedReadback?.evidenceRef && !trustedEvidence.includes(trustedReadback.evidenceRef)) trustedEvidence.push(trustedReadback.evidenceRef);
+    }
     const now = clock();
-    const state = verified === true ? WORK_STATE.RETURNED : WORK_STATE.UNKNOWN;
-    const next = { ...record, state, return: { actor: text(actor, 'actor'), readback: clone(readback), evidenceRefs: [...evidenceRefs], verified: verified === true, returnedAt: now }, history: [...record.history, { state, at: now }], updatedAt: now };
+    const state = trustedVerified ? WORK_STATE.RETURNED : WORK_STATE.UNKNOWN;
+    const next = {
+      ...record,
+      state,
+      return: {
+        actor: text(actor, 'actor'),
+        readback: clone(trustedReadback || readback),
+        evidenceRefs: trustedEvidence,
+        verified: trustedVerified,
+        returnedAt: now,
+      },
+      history: [...record.history, { state, at: now }],
+      updatedAt: now,
+    };
     await store.put(`work:${id}`, next);
     return clone(next);
   }

@@ -146,9 +146,14 @@ export function createMetropolisMcp({ runtime, authenticate, grants = [], source
       } else throw new Error('ACTION_NOT_FOUND');
       const readback = await runtime.getWork(workId);
       if (JSON.stringify(record) !== JSON.stringify(readback)) throw new Error('WRITE_READBACK_MISMATCH');
-      return toolResult({ actor, record: readback, readbackVerified: true, ownerExecutionVerified: false });
+      const ownerExecutionVerified = action === 'handoff'
+        ? readback?.handoff?.external?.verified === true
+        : action === 'return'
+          ? readback?.return?.verified === true
+          : false;
+      return toolResult({ actor, record: readback, readbackVerified: true, ownerExecutionVerified });
     } catch (error) {
-      const known = /^(.*_REQUIRED|WORK_NOT_FOUND|WORK_ALREADY_EXISTS|INVALID_ARGUMENT|INVALID_PAYLOAD|OWNER_NOT_GRANTED|DESTINATION_NOT_GRANTED|ACTION_NOT_FOUND|WRITE_READBACK_MISMATCH)$/;
+      const known = /^(.*_REQUIRED|WORK_NOT_FOUND|WORK_ALREADY_EXISTS|INVALID_ARGUMENT|INVALID_PAYLOAD|OWNER_NOT_GRANTED|DESTINATION_NOT_GRANTED|ACTION_NOT_FOUND|WRITE_READBACK_MISMATCH|FACTORY_[A-Z0-9_]+)$/;
       return toolResult({ reason: known.test(error.message) ? error.message : 'WORK_OPERATION_FAILED' }, true);
     }
   }
