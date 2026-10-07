@@ -134,7 +134,7 @@ test('HERMES creates Work ID only after INPUT → DRAFT → REVIEW → READY TO 
   assert.equal(created.structuredContent.result.go, true);
 });
 
-test('READY TO RESUME searches then resumes the existing Work ID and checkpoint', async () => {
+test('READY TO RESUME gates SEARCH then resumes the existing Work ID and checkpoint', async () => {
   const runtime = createCityRuntime({ store: createMemoryStore() });
   await runtime.intake({
     workId: 'WORK-EXISTING',
@@ -146,22 +146,70 @@ test('READY TO RESUME searches then resumes the existing Work ID and checkpoint'
   });
   const server = service('one', runtime, []);
 
+  const input = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_reception',
+    arguments: {
+      action: 'input_information',
+      payload: { information: { title: 'Continue Existing Work' } },
+    },
+  })).json()).result;
+  const draftId = input.structuredContent.result.draftId;
+
+  await rpc(server, 'tools/call', {
+    name: 'metropolis_reception',
+    arguments: { action: 'review', draftId, payload: {} },
+  });
+  await rpc(server, 'tools/call', {
+    name: 'metropolis_reception',
+    arguments: { action: 'ready_to_resume', draftId, payload: {} },
+  });
+
   const search = (await (await rpc(server, 'tools/call', {
     name: 'metropolis_reception',
-    arguments: { action: 'search_work', payload: { query: 'Existing Work' } },
+    arguments: { action: 'search_work', draftId, payload: { query: 'Existing Work' } },
   })).json()).result;
   assert.equal(search.isError, false);
   assert.equal(search.structuredContent.result.matches[0].workId, 'WORK-EXISTING');
 
   const resume = (await (await rpc(server, 'tools/call', {
     name: 'metropolis_reception',
-    arguments: { action: 'resume_work', payload: { workId: 'WORK-EXISTING' } },
+    arguments: { action: 'resume_work', draftId, payload: { workId: 'WORK-EXISTING' } },
   })).json()).result;
   assert.equal(resume.isError, false);
+  assert.equal(resume.structuredContent.result.status, 'WORK_RESUMED');
   assert.equal(resume.structuredContent.result.workId, 'WORK-EXISTING');
   assert.equal(resume.structuredContent.result.checkpointId, 'WORK-EXISTING:CP-07');
   assert.equal(resume.structuredContent.result.workTruthChanged, false);
+  assert.equal(resume.structuredContent.result.go, true);
 });
+test('CANCEL selects its target after the command and can cancel Draft or Work', async () => {
+  const runtime = createCityRuntime({ store: createMemoryStore() });
+  await runtime.intake({ workId: 'WORK-CANCEL-ME', ownerSystem: 'FACTORY', requestedBy: 'GO' });
+  const server = service('one', runtime, []);
+
+  const input = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_reception',
+    arguments: { action: 'input_information', payload: { information: { title: 'Temporary draft' } } },
+  })).json()).result;
+  const draftId = input.structuredContent.result.draftId;
+
+  const cancelledDraft = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_reception',
+    arguments: { action: 'cancel', payload: { targetKind: 'DRAFT', targetId: draftId } },
+  })).json()).result;
+  assert.equal(cancelledDraft.isError, false);
+  assert.equal(cancelledDraft.structuredContent.result.targetKind, 'DRAFT');
+  assert.equal(cancelledDraft.structuredContent.result.draft.state, 'CANCELLED');
+
+  const cancelledWork = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_reception',
+    arguments: { action: 'cancel', payload: { targetKind: 'WORK', targetId: 'WORK-CANCEL-ME' } },
+  })).json()).result;
+  assert.equal(cancelledWork.isError, false);
+  assert.equal(cancelledWork.structuredContent.result.targetKind, 'WORK');
+  assert.equal(cancelledWork.structuredContent.result.work.state, 'CANCELLED');
+});
+
 test('LIGHT cannot reuse GO grant or self-declare GO identity', async () => {
   const runtime = createCityRuntime();
   await runtime.intake({ workId: 'W1', ownerSystem: 'FACTORY' });
