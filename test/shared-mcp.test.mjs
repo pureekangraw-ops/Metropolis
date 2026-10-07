@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createMetropolisMcp } from '../src/shared-mcp.mjs';
 import { createCityRuntime, createMemoryStore } from '../src/city-runtime.mjs';
+import { createFactoryStationRuntime } from '../src/factory-station-runtime.mjs';
 
 const origin = 'https://city.example';
 const auth = async request => ({ actor: request.headers.get('authorization') === 'Bearer light' ? 'LIGHT' : request.headers.get('authorization') === 'Bearer go' ? 'GO' : null });
@@ -507,4 +508,193 @@ test('handoff cannot widen its destination or override its Work identity', async
   assert.equal(accepted.structuredContent.record.workId, 'W1');
   assert.equal(accepted.structuredContent.record.handoff.actor, 'GO');
   assert.equal(Object.hasOwn(accepted.structuredContent.record.handoff, 'railId'), false);
+});
+
+
+test('MCP golden path walks HERMES → Factory → GO review → MIMIR COMPLETE without losing Work identity', async () => {
+  const sourceSha = 'b'.repeat(40);
+  let received = null;
+  let factoryDone = false;
+
+  const fetchImpl = async (url, init = {}) => {
+    const target = String(url);
+    if (target.endsWith('/health')) {
+      return Response.json({
+        service: 'factory-district',
+        stationId: 'FACTORY-STATION',
+        status: 'READY',
+        sourceSha,
+        runtimeSha: sourceSha,
+        storage: { status: 'READY', durability: 'ADAPTER' },
+        transport: { status: 'READY', kind: 'HTTP' },
+        observedAt: '2026-10-08T00:00:00Z',
+      });
+    }
+
+    if (target.endsWith('/station/receive')) {
+      received = JSON.parse(init.body);
+      assert.equal(received.ownerDomain, 'CODE');
+      assert.deepEqual(received.scope, ['EXECUTE:CODE']);
+      assert.equal(received.workPass.kind, 'WORK_PASS');
+      assert.equal(received.workPass.status, 'ACTIVE');
+      assert.equal(received.workPassRef, `work-pass://${received.workPass.passId}`);
+      return Response.json({
+        receipt: {
+          receiptId: 'receipt-golden-1',
+          workId: received.workId,
+          checkpointId: received.checkpointId,
+          workPassRef: received.workPassRef,
+          stationId: 'FACTORY-STATION',
+          status: 'HANDOFF_VERIFIED',
+        },
+      }, { status: 202 });
+    }
+
+    if (target.endsWith('/station/readback/receipt-golden-1')) {
+      return Response.json({
+        receiptId: 'receipt-golden-1',
+        workId: received.workId,
+        checkpointId: received.checkpointId,
+        workPassRef: received.workPassRef,
+        stationId: 'FACTORY-STATION',
+        status: 'HANDOFF_VERIFIED',
+        boundaryVerified: true,
+        verificationScope: 'BOUNDARY_HANDOFF',
+        domainCompleted: factoryDone,
+        domainVerified: factoryDone,
+        evidenceRef: 'evidence://factory/golden-1',
+        sourceSha,
+        result: factoryDone ? {
+          workId: received.workId,
+          checkpointId: received.checkpointId,
+          workPassRef: received.workPassRef,
+          ownerDomain: received.ownerDomain,
+          resultRefs: ['artifact://factory/golden-1'],
+          artifactRefs: ['artifact://factory/golden-1'],
+          evidenceRefs: ['evidence://factory/golden-domain-1'],
+        } : null,
+        observedAt: '2026-10-08T00:00:01Z',
+      });
+    }
+
+    throw new Error(`UNEXPECTED_FACTORY_REQUEST:${target}`);
+  };
+
+  const factory = createFactoryStationRuntime({
+    baseUrl: 'https://factory.example',
+    sharedSecret: 'test-only-shared-secret',
+    fetchImpl,
+  });
+  const runtime = createCityRuntime({
+    store: createMemoryStore(),
+    stationRuntimes: { FACTORY_STATION: factory },
+  });
+  const server = createMetropolisMcp({
+    runtime,
+    authenticate: auth,
+    grants: [],
+    sourceSha: 'golden-path',
+    version: '1.0.0',
+    allowedOrigins: [origin],
+  });
+
+  const input = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_reception',
+    arguments: {
+      action: 'input_information',
+      payload: {
+        information: { title: 'Golden Factory Work', summary: 'Walk the whole city lifecycle' },
+        ownerSystem: 'FACTORY',
+      },
+    },
+  })).json()).result;
+  assert.equal(input.isError, false);
+  const draftId = input.structuredContent.result.draftId;
+
+  const review = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_reception',
+    arguments: { action: 'review', draftId },
+  })).json()).result;
+  assert.equal(review.structuredContent.result.review.status, 'READY_FOR_DECISION');
+
+  const ready = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_reception',
+    arguments: { action: 'ready_to_create', draftId },
+  })).json()).result;
+  assert.equal(ready.structuredContent.result.state, 'READY_TO_CREATE');
+
+  const created = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_reception',
+    arguments: { action: 'create_work', draftId },
+  })).json()).result;
+  assert.equal(created.isError, false);
+  const workId = created.structuredContent.result.workId;
+  const checkpointId = created.structuredContent.result.checkpointId;
+  const workPassRef = created.structuredContent.result.work.workPassRef;
+
+  const handed = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_work',
+    arguments: {
+      action: 'handoff',
+      workId,
+      payload: {
+        stationId: 'FACTORY_STATION',
+        operation: 'FACTORY_HANDOFF',
+        payload: {
+          ownerDomain: 'CODE',
+          scope: ['EXECUTE:CODE'],
+          intent: 'BUILD_AND_RETURN',
+          inputRefs: ['artifact://input/golden-1'],
+        },
+      },
+    },
+  })).json()).result;
+  assert.equal(handed.isError, false);
+  assert.equal(handed.structuredContent.record.state, 'HANDED_OFF');
+  assert.equal(handed.structuredContent.record.workId, workId);
+  assert.equal(handed.structuredContent.record.checkpointId, checkpointId);
+  assert.equal(handed.structuredContent.record.handoff.workPassRef, workPassRef);
+  assert.equal(handed.structuredContent.record.journeys[0].status, 'IN_TRANSIT');
+  assert.equal(received.workId, workId);
+  assert.equal(received.checkpointId, checkpointId);
+  assert.equal(received.workPassRef, workPassRef);
+
+  factoryDone = true;
+
+  const returnedForReview = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_work',
+    arguments: { action: 'return', workId },
+  })).json()).result;
+  assert.equal(returnedForReview.isError, false);
+  assert.equal(returnedForReview.structuredContent.record.state, 'RETURN_REVIEW');
+  assert.equal(returnedForReview.structuredContent.record.stationReturnReview.status, 'GO_REVIEW_REQUIRED');
+  assert.equal(returnedForReview.structuredContent.record.stationReturnReview.verified, true);
+  assert.equal(returnedForReview.structuredContent.record.journeys[0].status, 'RETURNED');
+  assert.equal(returnedForReview.structuredContent.record.stationReturnReview.readback.result.workPassRef, workPassRef);
+
+  const reviewed = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_work',
+    arguments: {
+      action: 'return',
+      workId,
+      payload: { stationReviewed: true, updates: [] },
+    },
+  })).json()).result;
+  assert.equal(reviewed.isError, false);
+  assert.equal(reviewed.structuredContent.record.state, 'RETURNED');
+  assert.equal(reviewed.structuredContent.record.return.verified, true);
+  assert.equal(reviewed.structuredContent.record.returnReview.status, 'ORGANIZED');
+  assert.equal(reviewed.structuredContent.record.stationReturnReview.status, 'GO_REVIEWED');
+
+  const completed = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_work',
+    arguments: { action: 'complete', workId },
+  })).json()).result;
+  assert.equal(completed.isError, false);
+  assert.equal(completed.structuredContent.record.state, 'COMPLETED');
+  assert.equal(completed.structuredContent.record.online.status, 'OFFLINE');
+  assert.equal(completed.structuredContent.record.workPass.status, 'COMPLETED');
+  assert.equal(completed.structuredContent.record.workId, workId);
+  assert.equal(completed.structuredContent.record.checkpointId, checkpointId);
+  assert.equal(completed.structuredContent.record.workPassRef, workPassRef);
 });
