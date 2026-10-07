@@ -3,8 +3,17 @@ import { createFactoryRailAdapter } from './stations/factory.mjs';
 const READY = 'READY';
 const FACTORY_STATION_ID = 'FACTORY_STATION';
 const FACTORY_EXTERNAL_STATION_ID = 'FACTORY-STATION';
+const FACTORY_DOMAINS = new Set(['CODE', 'VISUAL', 'LOGIC']);
 
 function text(value) { return String(value ?? '').trim(); }
+
+function normalizeFactoryExecution(payload = {}) {
+  const ownerDomain = text(payload.ownerDomain).toUpperCase();
+  if (!FACTORY_DOMAINS.has(ownerDomain)) throw new Error('FACTORY_OWNER_DOMAIN_REQUIRED_OR_INVALID');
+  const scope = Array.isArray(payload.scope) ? [...new Set(payload.scope.map(text).filter(Boolean))] : [];
+  if (!scope.includes(`EXECUTE:${ownerDomain}`)) throw new Error('FACTORY_SCOPE_REQUIRED');
+  return { ownerDomain, scope };
+}
 
 export function createFactoryStationRuntime({ baseUrl, sharedSecret, fetchImpl = fetch } = {}) {
   if (!text(baseUrl) || !text(sharedSecret)) {
@@ -23,9 +32,12 @@ export function createFactoryStationRuntime({ baseUrl, sharedSecret, fetchImpl =
     if (probe.status !== READY) throw new Error('FACTORY_STATION_NOT_READY');
     const sourceSha = text(probe.runtime?.sourceSha);
     if (!/^[a-f0-9]{40}$/.test(sourceSha)) throw new Error('FACTORY_SOURCE_SHA_UNVERIFIED');
+    const execution = normalizeFactoryExecution(payload);
 
     const transportPayload = {
       ...payload,
+      ownerDomain: execution.ownerDomain,
+      scope: execution.scope,
       workId,
       checkpointId,
       expectedSourceSha: sourceSha,

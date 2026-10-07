@@ -34,9 +34,18 @@ test('Factory round trip preserves Work/Checkpoint and stays UNKNOWN until DWARF
         sourceSha: receivedPayload.expectedSourceSha,
         stationId: 'FACTORY-STATION',
         boundaryVerified: true,
+        domainCompleted: domainVerified,
         domainVerified,
         evidenceRef: 'factory-station://receipt-1',
-        result: domainVerified ? { workId: receivedPayload.workId, checkpointId: receivedPayload.checkpointId, workPassRef: receivedPayload.workPassRef } : null,
+        result: domainVerified ? {
+          workId: receivedPayload.workId,
+          checkpointId: receivedPayload.checkpointId,
+          workPassRef: receivedPayload.workPassRef,
+          ownerDomain: receivedPayload.ownerDomain,
+          resultRefs: ['artifact://factory/result-1'],
+          artifactRefs: ['artifact://factory/result-1'],
+          evidenceRefs: ['evidence://factory/result-1'],
+        } : null,
       });
     }
     throw new Error('unexpected fetch ' + target);
@@ -66,7 +75,12 @@ test('Factory round trip preserves Work/Checkpoint and stays UNKNOWN until DWARF
     stationId: 'FACTORY_STATION',
     operation: 'FACTORY_HANDOFF',
     actor: 'GO',
-    payload: { intent: 'BUILD_AND_RETURN', inputRefs: ['artifact://input'] },
+    payload: {
+      ownerDomain: 'CODE',
+      scope: ['EXECUTE:CODE'],
+      intent: 'BUILD_AND_RETURN',
+      inputRefs: ['artifact://input'],
+    },
   });
 
   assert.equal(handed.state, WORK_STATE.HANDED_OFF);
@@ -80,6 +94,8 @@ test('Factory round trip preserves Work/Checkpoint and stays UNKNOWN until DWARF
   assert.equal(receivedPayload.workPass.workId, 'WORK-1');
   assert.equal(receivedPayload.workPass.checkpointId, 'CP-1');
   assert.equal(receivedPayload.workPassRef, `work-pass://${receivedPayload.workPass.passId}`);
+  assert.equal(receivedPayload.ownerDomain, 'CODE');
+  assert.deepEqual(receivedPayload.scope, ['EXECUTE:CODE']);
 
   const premature = await city.returnWork({
     workId: 'WORK-1',
@@ -120,4 +136,42 @@ test('Factory round trip preserves Work/Checkpoint and stays UNKNOWN until DWARF
   assert.equal(returned.dataLifecycle.some(entry => entry.producer === 'POST_OFFICE' && entry.kind === 'DELIVERY_RECEIPT'), true);
   assert.equal(returned.workId, 'WORK-1');
   assert.equal(returned.checkpointId, 'CP-1');
+});
+
+
+test('Factory Station fails closed before dispatch when ownerDomain or execution scope is missing', async () => {
+  let receiveCalls = 0;
+  const fetchImpl = async (url) => {
+    if (String(url).endsWith('/health')) {
+      return Response.json({
+        status: 'READY',
+        storage: { status: 'READY' },
+        transport: { status: 'READY' },
+        sourceSha: SOURCE_SHA,
+      });
+    }
+    receiveCalls += 1;
+    return Response.json({}, { status: 500 });
+  };
+  const factory = createFactoryStationRuntime({
+    baseUrl: 'https://factory.example',
+    sharedSecret: 'secret',
+    fetchImpl,
+  });
+
+  await assert.rejects(() => factory.handoff({
+    workId: 'WORK-MISSING-DOMAIN',
+    checkpointId: 'CP-1',
+    operation: 'FACTORY_HANDOFF',
+    payload: { scope: ['EXECUTE:CODE'] },
+  }), /FACTORY_OWNER_DOMAIN_REQUIRED_OR_INVALID/);
+
+  await assert.rejects(() => factory.handoff({
+    workId: 'WORK-MISSING-SCOPE',
+    checkpointId: 'CP-1',
+    operation: 'FACTORY_HANDOFF',
+    payload: { ownerDomain: 'CODE' },
+  }), /FACTORY_SCOPE_REQUIRED/);
+
+  assert.equal(receiveCalls, 0);
 });

@@ -18,7 +18,24 @@ const profileOutputSchema = Object.freeze({
 });
 const actionSchemas = {
   read:{type:'object',properties:{},additionalProperties:false},
-  handoff:{type:'object',properties:{stationId:string,operation:string,payload:{type:'object'}},required:['stationId','operation'],additionalProperties:false},
+  handoff:{
+    type:'object',
+    properties:{
+      stationId:{...string,description:'Destination Station. FACTORY_STATION uses the Factory execution contract.'},
+      operation:{...string,description:'Station operation name.'},
+      payload:{
+        type:'object',
+        description:'Station-specific payload. For FACTORY_STATION include ownerDomain and scope; Factory fails closed if either is absent or invalid.',
+        properties:{
+          ownerDomain:{type:'string',enum:['CODE','VISUAL','LOGIC'],description:'Factory owner domain. Required by FACTORY_STATION.'},
+          scope:{type:'array',items:string,minItems:1,description:'Factory execution scope. FACTORY_STATION requires EXECUTE:<ownerDomain>, for example EXECUTE:CODE.'},
+        },
+        additionalProperties:true,
+      },
+    },
+    required:['stationId','operation'],
+    additionalProperties:false,
+  },
   return:{type:'object',properties:{readback:{type:'object'},evidenceRefs:{type:'array',items:string},updates:{type:'array',items:{type:'object',properties:{kind:string,valueRef:string,note:string},additionalProperties:false}},stationReviewed:{type:'boolean'}},additionalProperties:false},
   cancel:{type:'object',properties:{},additionalProperties:false},
   complete:{type:'object',properties:{},additionalProperties:false},
@@ -124,7 +141,7 @@ const tools = [
   {
     name: 'metropolis_work',
     title: 'Use Existing Metropolis Work',
-    description: 'Operate on existing Work. Station RETURN records OUT and asks GO to review returned items; MIMIR organizes the reviewed packet. CANCEL/COMPLETE are MIMIR lifecycle actions.',
+    description: 'Operate on existing Work. For handoff to FACTORY_STATION, payload.payload must include ownerDomain (CODE, VISUAL, or LOGIC) and scope containing EXECUTE:<ownerDomain>. Station RETURN records OUT and asks GO to review returned items; MIMIR organizes the reviewed packet. CANCEL/COMPLETE are MIMIR lifecycle actions.',
     inputSchema: workInputSchema,
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     securitySchemes: oauthSecurity,
