@@ -47,7 +47,7 @@ export function createCityMap() {
   });
 }
 
-export function createCityRuntime({ store = createMemoryStore(), clock = () => new Date().toISOString(), idFactory = () => crypto.randomUUID(), sourceSha = 'UNKNOWN', stationRuntimes = {} } = {}) {
+export function createCityRuntime({ store = createMemoryStore(), clock = () => new Date().toISOString(), idFactory = () => crypto.randomUUID(), sourceSha = 'UNKNOWN', stationRuntimes = {}, tabletRuntime = null } = {}) {
   if (!store || typeof store.get !== 'function' || typeof store.put !== 'function') throw new TypeError('store_REQUIRED');
   const mailboxes = new Map();
   const stations = Object.freeze({ ...stationRuntimes });
@@ -70,7 +70,7 @@ export function createCityRuntime({ store = createMemoryStore(), clock = () => n
       truthOwner: owner,
       createdAt: now,
     });
-    const record = {
+    const baseRecord = {
       kind: 'WORK_RECORD',
       workId: id,
       ownerSystem: owner,
@@ -83,9 +83,30 @@ export function createCityRuntime({ store = createMemoryStore(), clock = () => n
       return: null,
       reports: [],
       dataLifecycle,
+      tablet: null,
       history: [{ state: WORK_STATE.RECEIVED, at: now }],
       sourceSha,
       updatedAt: now,
+    };
+    await store.put(`work:${id}`, baseRecord);
+
+    let tablet = null;
+    if (tabletRuntime?.issue) {
+      try {
+        tablet = await tabletRuntime.issue(baseRecord, { actor: 'HERMES' });
+      } catch (error) {
+        tablet = {
+          status: 'UNKNOWN',
+          verified: false,
+          reason: 'TABLET_ISSUE_FAILED',
+          errorCode: error?.message || 'UNKNOWN',
+        };
+      }
+    }
+    const record = {
+      ...baseRecord,
+      tablet: clone(tablet),
+      updatedAt: clock(),
     };
     await store.put(`work:${id}`, record);
     return clone(record);
