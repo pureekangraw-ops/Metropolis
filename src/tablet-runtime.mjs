@@ -94,7 +94,7 @@ function draftManifestFor(draft = {}, {
     sourceSha: text(sourceSha) || 'UNKNOWN',
     savedAt,
     ownsWorkTruth: false,
-    workCreated: Boolean(draft.workId),
+    workCreated: draft.workCreated === true,
     authorityCreated: false,
   });
 }
