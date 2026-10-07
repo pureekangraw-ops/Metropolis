@@ -1,4 +1,11 @@
-import { createCargoEnvelope, deliverCargo, createMailbox, MAILBOX_STATUS } from './post-office.mjs';
+import {
+  createCargoEnvelope,
+  deliverCargo,
+  createMailbox,
+  createPostOfficeBranch,
+  deliverBranchCargo,
+  MAILBOX_STATUS,
+} from './post-office.mjs';
 import { prepareMimirReturn } from './agents/mimir/return-desk.mjs';
 import { rotateHallData } from './secretary/product-life-cycle.mjs';
 import { createPixieReport } from './pixie/report-router.mjs';
@@ -240,6 +247,57 @@ export function createCityRuntime({ store = createMemoryStore(), clock = () => n
       createdAt: now,
     });
 
+    let postal = null;
+    if (record.handoff?.stationId === 'FACTORY_STATION') {
+      const originBranch = createPostOfficeBranch({
+        branchId: 'FACTORY_POST_OFFICE',
+        systemId: 'FACTORY',
+        role: 'SUB_OFFICE',
+      });
+      const destinationBranch = createPostOfficeBranch({
+        branchId: 'CENTRAL_POST_OFFICE',
+        systemId: 'METROPOLIS',
+        role: 'CENTRAL_OFFICE',
+      });
+      const mailbox = createMailbox({
+        mailboxId: 'HALL_RETURN_MAILBOX',
+        owner: 'CITY_HALL',
+        receiver: 'CITY_HALL',
+      });
+      const cargo = createCargoEnvelope({
+        dataId: `${id}:RETURN:CARGO:${nextReports.length}`,
+        dataKind: 'RESULT',
+        payloadRef: `mimir-return://${id}/${record.checkpointId}`,
+        owner: record.ownerSystem,
+        sender: 'FACTORY_POST_OFFICE',
+        receiver: 'CITY_HALL',
+        mailbox: mailbox.mailboxId,
+        originBranch: originBranch.branchId,
+        destinationBranch: destinationBranch.branchId,
+      });
+      postal = deliverBranchCargo(cargo, {
+        originBranch,
+        destinationBranch,
+        mailbox,
+        receiptId: idFactory(),
+        observedAt: now,
+      });
+      if (postal.status === 'DELIVERED' && postal.receipt?.receiptId) {
+        dataLifecycle = rotateHallData(dataLifecycle, {
+          dataId: `${id}:DATA:POST_OFFICE:${nextReports.length}`,
+          workId: id,
+          checkpointId: record.checkpointId,
+          producer: 'POST_OFFICE',
+          kind: 'DELIVERY_RECEIPT',
+          payloadRef: `post-office://${postal.receipt.receiptId}`,
+          evidenceRefs: [],
+          ownerSystem: record.ownerSystem,
+          truthOwner: record.ownerSystem,
+          createdAt: now,
+        });
+      }
+    }
+
     const state = trustedVerified ? WORK_STATE.RETURNED : WORK_STATE.UNKNOWN;
     const next = {
       ...record,
@@ -252,6 +310,7 @@ export function createCityRuntime({ store = createMemoryStore(), clock = () => n
         readback: clone(trustedReadback || readback),
         evidenceRefs: trustedEvidence,
         organized: clone(organized.organized),
+        postal: clone(postal),
         verified: trustedVerified,
         returnedAt: now,
       },
