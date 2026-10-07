@@ -87,6 +87,10 @@ test('tool descriptors expose strict action-discriminated input schemas', async 
   const handoff = work.inputSchema.oneOf.find(schema => schema.properties.action.const === 'handoff');
   assert.deepEqual(handoff.required, ['action', 'workId', 'payload']);
   assert.deepEqual(handoff.properties.payload.required, ['stationId', 'operation']);
+  const stationPayload = handoff.properties.payload.properties.payload;
+  assert.deepEqual(stationPayload.properties.ownerDomain.enum, ['CODE', 'VISUAL', 'LOGIC']);
+  assert.equal(stationPayload.properties.scope.type, 'array');
+  assert.match(stationPayload.description, /FACTORY_STATION/);
   const workCancel = work.inputSchema.oneOf.find(schema => schema.properties.action.const === 'cancel');
   const workComplete = work.inputSchema.oneOf.find(schema => schema.properties.action.const === 'complete');
   assert.deepEqual(workCancel.required, ['action', 'workId']);
