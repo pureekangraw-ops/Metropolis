@@ -176,6 +176,7 @@ export function createHermesIntakeDesk({
       workId,
       ownerSystem: draft.ownerSystem,
       requestedBy: text(actor),
+      workPassActor: text(actor),
       inputRefs: [...(draft.inputRefs || [])],
       intakeDraftId: draft.draftId,
       intakeInformation: clone(draft.information || {}),
