@@ -16,6 +16,8 @@ function freeze(value) {
 }
 
 const nodes = [
+  {id:'OBSERVATORY_STATION',kind:NODE_KIND.STATION,parent:'METROPOLIS'},
+  {id:'OBSERVATORY',kind:NODE_KIND.DESTINATION,parent:'EXTERNAL_SYSTEM'},
   { id: 'METROPOLIS', kind: NODE_KIND.CITY },
   { id: 'SHOP', kind: NODE_KIND.BUILDING, parent: 'METROPOLIS' },
   { id: 'SPECTRUMSALE', kind: NODE_KIND.BUILDING, parent: 'METROPOLIS', attachedTo: 'SHOP' },
@@ -48,6 +50,7 @@ const paths = [
 ];
 
 const stations = [
+  {stationId:'OBSERVATORY_STATION',destinationId:'OBSERVATORY',ownerSystem:'OBSERVATORY'},
   { stationId: 'FACTORY_STATION', destinationId: 'FACTORY', ownerSystem: 'FACTORY' },
   { stationId: 'PRISM_STATION', destinationId: 'PRISM', ownerSystem: 'PRISM' },
   { stationId: 'DRIVE_STATION', destinationId: 'GOOGLE_DRIVE', ownerSystem: 'GOOGLE_DRIVE' },

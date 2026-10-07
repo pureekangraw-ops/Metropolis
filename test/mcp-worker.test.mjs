@@ -137,3 +137,19 @@ test('slow and oversized public bodies stop before the durable entry gate', asyn
   const small = new Request(origin + '/oauth/authorize', { method: 'POST', body: 'passcode=example' });
   assert.equal(await (await bufferRequest(small)).text(), 'passcode=example');
 });
+test('owner pairing exposes real Observatory Work only to selected OAuth actor and existing handoff dispatches durable mailbox', async () => {
+  const durable=storage();
+  const make=()=>createGateway({env,storage:durable,sourceSha:'a'.repeat(40)});
+  const gateway=make(), deviceId='1b66e7ca-12fa-4db5-86e5-cc5ef3aff001';
+  const pairResponse=await gateway.fetch(new Request(origin+'/observatory/pair',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({deviceId,actor:'GO',passcode:env.MCP_OWNER_PASSCODE,authorities:['browser.observe','browser.reload']})}));
+  assert.equal(pairResponse.status,200);const paired=await pairResponse.json();
+  const arrived=(await call(make(),'metropolis_arrive',{})).body.result.structuredContent;
+  const work=arrived.current.works.find(w=>w.workId===paired.browser.workId);
+  assert.equal(work.present,true);assert.equal(work.ownerSystem,'OBSERVATORY');
+  assert.equal((await call(make(),'metropolis_arrive',{},'LIGHT')).body.result.structuredContent.current.works.some(w=>w.workId===work.workId),false);
+  const publish=await make().fetch(new Request(paired.browser.publishSnapshots,{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+paired.token},body:JSON.stringify({deviceId,tabId:'tab',captureId:'cap',revision:1,sequence:1,epoch:1,capturedAtEpochMs:Date.now(),schema:'observer.snapshot.v1',appVersion:'1',url:'https://example.com?secret=private',title:'page',text:'safe',targets:[],truncated:false})}));assert.equal(publish.status,200);
+  const input={action:'handoff',workId:work.workId,payload:{stationId:'OBSERVATORY_STATION',operation:'observe',payload:{deviceId,view:'browser'}}};
+  const observed=(await call(make(),'metropolis_work',input)).body.result.structuredContent;
+  assert.equal(observed.stationResult.snapshot.captureId,'cap');assert.equal(observed.stationResult.businessOutcome,'UNKNOWN');assert.equal(observed.record.handoff.stationId,'OBSERVATORY_STATION');assert.equal(observed.record.handoff.payload.view,'browser');assert.equal(observed.ownerExecutionVerified,false);
+  assert.equal((await call(make(),'metropolis_work',input,'LIGHT')).body.result.structuredContent.reason,'NO_GRANT');
+});
