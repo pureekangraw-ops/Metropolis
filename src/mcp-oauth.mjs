@@ -111,11 +111,12 @@ function identityFromRequestedScope(scope) {
   return matches.length === 1 ? { subject: matches[0][0], scope: matches[0][1] } : null;
 }
 
-function validCimdClientId(value) {
+function validCimdClientId(value, config = {}) {
   try {
     const url = new URL(String(value || ''));
-    if (url.protocol !== 'https:' || url.hostname !== 'chatgpt.com' || url.username || url.password || url.search || url.hash) return false;
-    return /^\/oauth\/(?:client\.json|[^/]+\/client\.json)$/.test(url.pathname);
+    if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) return false;
+    if (url.hostname === 'chatgpt.com') return /^\/oauth\/(?:client\.json|[^/]+\/client\.json)$/.test(url.pathname);
+    return url.origin === String(config.issuer || '') && url.pathname === '/oauth/observatory-client.json';
   } catch {
     return false;
   }
@@ -123,8 +124,23 @@ function validCimdClientId(value) {
 
 const CHATGPT_CIMD_CLIENT_ID = 'https://chatgpt.com/oauth/client.json';
 const CHATGPT_CIMD_REDIRECT_URI = 'https://chatgpt.com/connector_platform_oauth_redirect';
+const OBSERVATORY_CIMD_PATH = '/oauth/observatory-client.json';
+const OBSERVATORY_CIMD_REDIRECT_PATH = '/oauth/observatory-callback';
 
 function knownCimdClient(config, clientId) {
+  if (clientId === `${config.issuer}${OBSERVATORY_CIMD_PATH}`) {
+    return {
+      clientId,
+      clientSecret: '',
+      redirectUris: [`${config.issuer}${OBSERVATORY_CIMD_REDIRECT_PATH}`],
+      resources: [defaultResource(config)],
+      subject: 'GO',
+      scope: ACTOR_SCOPES.GO,
+      fixedIdentity: { subject: 'GO', scope: ACTOR_SCOPES.GO },
+      kind: 'CIMD',
+      tokenEndpointAuthMethod: 'none',
+    };
+  }
   if (clientId !== CHATGPT_CIMD_CLIENT_ID) return null;
   return {
     clientId,
@@ -139,7 +155,7 @@ function knownCimdClient(config, clientId) {
 }
 
 async function resolveCimdClient(config, clientId) {
-  if (config.allowCimd !== true || !validCimdClientId(clientId)) return null;
+  if (config.allowCimd !== true || !validCimdClientId(clientId, config)) return null;
   const known = knownCimdClient(config, clientId);
   if (known) return known;
   const fetchImpl = config.fetchImpl || fetch;
@@ -217,7 +233,11 @@ function protectedResourceForMetadata(config, _path) {
 }
 
 function clientAllowsIdentity(client, subject, scope) {
-  if (client?.kind === 'CIMD') return actorIdentity(subject)?.scope === scope;
+  if (client?.kind === 'CIMD') {
+    return client.fixedIdentity
+      ? client.fixedIdentity.subject === subject && client.fixedIdentity.scope === scope
+      : actorIdentity(subject)?.scope === scope;
+  }
   return client?.subject === subject && client?.scope === scope;
 }
 
@@ -232,12 +252,12 @@ async function validateAuthorize(input, config) {
   if (!/^[A-Za-z0-9_-]{43,128}$/.test(challenge)) throw new Error('invalid code challenge');
   const resource = resolveClientResource(config, client, input.get('resource'));
   const requestedScope = String(input.get('scope') || '');
-  const fixedIdentity = client.kind === 'REGISTERED'
+  const fixedIdentity = client.fixedIdentity || (client.kind === 'REGISTERED'
     ? { subject: client.subject, scope: client.scope }
-    : identityFromRequestedScope(requestedScope);
-  if (client.kind === 'REGISTERED') {
+    : identityFromRequestedScope(requestedScope));
+  if (client.kind === 'REGISTERED' || client.fixedIdentity) {
     const requestedActor = identityFromRequestedScope(requestedScope);
-    if (requestedActor && requestedActor.subject !== client.subject) throw new Error('scope identity mismatch');
+    if (requestedActor && requestedActor.subject !== fixedIdentity.subject) throw new Error('scope identity mismatch');
   }
   return {
     client,
@@ -316,7 +336,9 @@ export async function verifyAccessToken(request, config = {}) {
   const clientId = String(payload.client_id || '').trim();
   if (config.requireClientId === true && !clientId) throw new Error('invalid access token');
   const registered = oauthClients(config).find(client => client.clientId === clientId);
-  const cimdAllowed = config.allowCimd === true && validCimdClientId(clientId) && actorIdentity(payload.sub)?.scope === payload.scope;
+  const cimdAllowed = config.allowCimd === true
+    && validCimdClientId(clientId, config)
+    && clientAllowsIdentity(knownCimdClient(config, clientId) || {}, payload.sub, payload.scope);
   if (registered) {
     if (!clientAllowsIdentity(registered, payload.sub, payload.scope)) throw new Error('client identity mismatch');
   } else if (!cimdAllowed) {
@@ -364,6 +386,19 @@ function metadata(config, path) {
     authorization_servers: [config.issuer],
     scopes_supported: scopesForMetadata(config),
     bearer_methods_supported: ['header'],
+  });
+}
+
+function observatoryClientMetadata(config) {
+  const clientId = `${config.issuer}${OBSERVATORY_CIMD_PATH}`;
+  const redirectUri = `${config.issuer}${OBSERVATORY_CIMD_REDIRECT_PATH}`;
+  return json({
+    client_id: clientId,
+    redirect_uris: [redirectUri],
+    grant_types: ['authorization_code'],
+    response_types: ['code'],
+    token_endpoint_auth_method: 'none',
+    scope: ACTOR_SCOPES.GO,
   });
 }
 
@@ -421,6 +456,10 @@ export function createOAuthHandler(config = {}) {
   return async function handleOAuth(request) {
     const url = new URL(request.url);
     if (!configured(config)) return json({ code: 'OAUTH_NOT_CONFIGURED' }, 503);
+
+    if (request.method === 'GET' && url.pathname === OBSERVATORY_CIMD_PATH) {
+      return observatoryClientMetadata(config);
+    }
 
     if (request.method === 'GET' && [
       '/.well-known/oauth-authorization-server',
