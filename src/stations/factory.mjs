@@ -90,12 +90,18 @@ export function createFactoryRailAdapter({
       && body.workId === payload.workId && body.checkpointId === payload.checkpointId
       && body.stationId === 'FACTORY-STATION'
       && Boolean(payload.expectedSourceSha) && body.sourceSha === payload.expectedSourceSha;
+    const passCorrelated = Boolean(
+      payload?.workPassRef
+      && body.workPassRef === payload.workPassRef
+      && (!body.domainVerified || body.result?.workPassRef === payload.workPassRef)
+    );
     const verified = Boolean(
       response.ok
       && body.receiptId === receipt.receiptId
       && body.boundaryVerified === true
       && body.evidenceRef
       && correlated
+      && passCorrelated
     );
     return {
       ...body,
