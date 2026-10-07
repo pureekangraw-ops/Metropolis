@@ -18,6 +18,7 @@ export const INTAKE_STATE = Object.freeze({
   READY_TO_CREATE: 'READY_TO_CREATE',
   READY_TO_RESUME: 'READY_TO_RESUME',
   WORK_CREATED: 'WORK_CREATED',
+  WORK_RESUMED: 'WORK_RESUMED',
   CANCELLED: 'CANCELLED',
 });
 
@@ -31,7 +32,7 @@ function assertActor(record, actor) {
 function assertMutable(record) {
   if (!record) throw new Error('DRAFT_NOT_FOUND');
   if (record.state === INTAKE_STATE.CANCELLED) throw new Error('DRAFT_CANCELLED');
-  if (record.state === INTAKE_STATE.WORK_CREATED) throw new Error('DRAFT_ALREADY_CONVERTED');
+  if ([INTAKE_STATE.WORK_CREATED, INTAKE_STATE.WORK_RESUMED].includes(record.state)) throw new Error('DRAFT_ALREADY_CONVERTED');
 }
 
 function searchableWork(record = {}) {
@@ -199,8 +200,16 @@ export function createHermesIntakeDesk({
     });
   }
 
-  async function search({ actor, query, limit = 10 } = {}) {
-    if (!text(actor)) throw new Error('ACTOR_REQUIRED');
+  async function search({ actor, draftId, query, limit = 10 } = {}) {
+    const who = text(actor);
+    const intakeId = text(draftId);
+    if (!who) throw new Error('ACTOR_REQUIRED');
+    if (!intakeId) throw new Error('DRAFT_ID_REQUIRED');
+    const draft = await store.get(`intake:${intakeId}`);
+    assertMutable(draft);
+    assertActor(draft, who);
+    if (draft.state !== INTAKE_STATE.READY_TO_RESUME) throw new Error('READY_TO_RESUME_REQUIRED');
+
     const q = text(query).toLowerCase();
     if (!q) throw new Error('SEARCH_QUERY_REQUIRED');
     const boundedLimit = Math.max(1, Math.min(Number(limit) || 10, 25));
@@ -219,6 +228,7 @@ export function createHermesIntakeDesk({
         updatedAt: record.updatedAt || null,
       }));
     return Object.freeze({
+      draftId: intakeId,
       query: text(query),
       matches: Object.freeze(matches),
       count: matches.length,
@@ -226,15 +236,34 @@ export function createHermesIntakeDesk({
     });
   }
 
-  async function resume({ actor, workId } = {}) {
-    if (!text(actor)) throw new Error('ACTOR_REQUIRED');
+  async function resume({ actor, draftId, workId } = {}) {
+    const who = text(actor);
+    const intakeId = text(draftId);
+    if (!who) throw new Error('ACTOR_REQUIRED');
+    if (!intakeId) throw new Error('DRAFT_ID_REQUIRED');
+    const draft = await store.get(`intake:${intakeId}`);
+    assertMutable(draft);
+    assertActor(draft, who);
+    if (draft.state !== INTAKE_STATE.READY_TO_RESUME) throw new Error('READY_TO_RESUME_REQUIRED');
+
     const id = text(workId);
     if (!id) throw new Error('WORK_ID_REQUIRED');
     const record = await getWork(id);
     if (!record) throw new Error('WORK_NOT_FOUND');
     if (record.state === 'CANCELLED') throw new Error('WORK_CANCELLED');
+
+    const resumedDraft = await persistDraft({
+      ...draft,
+      state: INTAKE_STATE.WORK_RESUMED,
+      workId: record.workId,
+      checkpointId: record.checkpointId,
+      workCreated: false,
+      resumedAt: clock(),
+    }, who);
+
     return Object.freeze({
-      status: 'RESUME_READY',
+      status: 'WORK_RESUMED',
+      draft: resumedDraft,
       workId: record.workId,
       checkpointId: record.checkpointId,
       state: record.state,
@@ -242,6 +271,7 @@ export function createHermesIntakeDesk({
       tablet: clone(record.tablet || null),
       workTruthChanged: false,
       rule: HERMES_INTAKE_FLOW.resumeRule,
+      go: true,
     });
   }
 
