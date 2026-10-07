@@ -101,6 +101,7 @@ export function createMetropolisMcp({ runtime, authenticate, grants = [], source
           ownerSystem: record.ownerSystem || null,
           updatedAt: record.updatedAt || null,
           authorizedActions: authorizedActions.filter(grant => grant.workId === workId).map(grant => grant.action),
+          tablet: record.tablet || null,
         };
       } catch {
         return { workId, present: null, state: 'UNKNOWN', checkpointId: null, ownerSystem: null, updatedAt: null, authorizedActions: authorizedActions.filter(grant => grant.workId === workId).map(grant => grant.action), reason: 'CURRENT_READ_FAILED' };
