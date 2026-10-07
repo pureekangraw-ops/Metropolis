@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHermesReception, findHermesLostWork } from '../src/agents/hermes/station-reception.mjs';
-import { prepareMimirReturn, RETURN_CONFIRMATION } from '../src/agents/mimir/return-desk.mjs';
-import { rotateHallData, DATA_LIFECYCLE_STATUS } from '../src/secretary/product-life-cycle.mjs';
-import { createPixieReport } from '../src/pixie/report-router.mjs';
+import { prepareMimirReturn } from '../src/agents/mimir/return-desk.mjs';
+import { rotatePixieData, DATA_LIFECYCLE_STATUS } from '../src/pixie/data-lifecycle.mjs';
+import { createPixieReport, createPixieStationDiagnostic } from '../src/pixie/report-router.mjs';
 
 test('HERMES reception exposes only existing authorized Work pointers and creates no Work', () => {
   const reception = createHermesReception({
@@ -27,37 +27,26 @@ test('HERMES reception exposes only existing authorized Work pointers and create
   assert.equal(findHermesLostWork(reception, 'W2'), null);
 });
 
-test('MIMIR asks for update and confirmation before organizing return data', () => {
-  const pending = prepareMimirReturn({
-    workId: 'W1',
-    checkpointId: 'CP1',
-    evidenceRefs: ['evidence://1'],
-    updates: [{ kind: 'NOTE', valueRef: 'note://1' }],
+test('MIMIR organizes a GO-reviewed packet without asking for another update confirmation', () => {
+  const organized = prepareMimirReturn({
+    workId: 'W1', checkpointId: 'CP1', journeyId: 'J1', readback: { status: 'RETURNED' },
+    evidenceRefs: ['evidence://1'], updates: [{ kind: 'NOTE', valueRef: 'note://1' }],
   });
-  assert.equal(pending.status, 'CONFIRMATION_REQUIRED');
-  assert.equal(pending.confirmationRequired, RETURN_CONFIRMATION);
-  assert.equal(pending.authorityChanged, false);
-
-  const confirmed = prepareMimirReturn({
-    workId: 'W1',
-    checkpointId: 'CP1',
-    readback: { status: 'RETURNED' },
-    evidenceRefs: ['evidence://1'],
-    updates: [{ kind: 'NOTE', valueRef: 'note://1' }],
-    confirmation: RETURN_CONFIRMATION,
-  });
-  assert.equal(confirmed.status, 'CONFIRMED');
-  assert.equal(confirmed.organized.metadata.organizedBy, 'MIMIR');
-  assert.equal(confirmed.organized.updates[0].valueRef, 'note://1');
+  assert.equal(organized.status, 'ORGANIZED');
+  assert.equal(organized.question, null);
+  assert.equal(organized.confirmationRequired, null);
+  assert.equal(organized.organized.metadata.organizedBy, 'MIMIR');
+  assert.equal(organized.organized.metadata.journeyId, 'J1');
+  assert.equal(organized.organized.updates[0].valueRef, 'note://1');
 });
 
-test('Secretary Product Life Cycle supersedes previous current data without rewriting truth owner', () => {
-  let entries = rotateHallData([], {
+test('PIXIE Data Life Cycle supersedes previous current data without rewriting truth owner', () => {
+  let entries = rotatePixieData([], {
     dataId: 'D1', workId: 'W1', checkpointId: 'CP1',
     producer: 'DWARF', kind: 'RESULT', payloadRef: 'artifact://1',
     ownerSystem: 'FACTORY', truthOwner: 'FACTORY',
   });
-  entries = rotateHallData(entries, {
+  entries = rotatePixieData(entries, {
     dataId: 'D2', workId: 'W1', checkpointId: 'CP1',
     producer: 'DWARF', kind: 'RESULT', payloadRef: 'artifact://2',
     ownerSystem: 'FACTORY', truthOwner: 'FACTORY',
@@ -66,7 +55,7 @@ test('Secretary Product Life Cycle supersedes previous current data without rewr
   assert.equal(entries[0].supersededBy, 'D2');
   assert.equal(entries[1].status, DATA_LIFECYCLE_STATUS.CURRENT);
   assert.equal(entries[1].truthOwner, 'FACTORY');
-  assert.equal(entries[1].managedBy, 'SECRETARY');
+  assert.equal(entries[1].managedBy, 'PIXIE');
 });
 
 test('PIXIE routes tool result to Secretary then Owner without claiming authority', () => {
@@ -85,4 +74,17 @@ test('PIXIE routes tool result to Secretary then Owner without claiming authorit
   assert.deepEqual(report.route, { from: 'PIXIE', to: 'SECRETARY', then: 'OWNER', final: 'WORKER' });
   assert.equal(report.authorityTransferred, false);
   assert.equal(report.ownerSystem, 'FACTORY');
+});
+
+
+test('PIXIE Station diagnostic counts returned baggage and reports additions without approval', () => {
+  const diagnostic = createPixieStationDiagnostic({
+    diagnosticId:'D1', workId:'W1', checkpointId:'CP1', journeyId:'J1', stationId:'FACTORY_STATION',
+    before:{artifactRefs:['artifact://old']},
+    after:{artifactRefs:['artifact://old','artifact://new'],evidenceRefs:['evidence://1'],receiptRefs:['receipt://1']},
+  });
+  assert.equal(diagnostic.status,'CHECKED');
+  assert.equal(diagnostic.counts.artifactRefs,2);
+  assert.deepEqual(diagnostic.added.artifactRefs,['artifact://new']);
+  assert.equal(diagnostic.mayApprove,false);
 });

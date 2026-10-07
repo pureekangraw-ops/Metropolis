@@ -78,6 +78,7 @@ test('tool descriptors expose strict action-discriminated input schemas', async 
   assert.equal(Object.hasOwn(cancel.properties, 'draftId'), false);
   assert.deepEqual(cancel.required, ['action', 'payload']);
   assert.deepEqual(cancel.properties.payload.required, ['targetKind', 'targetId']);
+  assert.deepEqual(cancel.properties.payload.properties.targetKind.enum, ['DRAFT']);
 
   const read = work.inputSchema.oneOf.find(schema => schema.properties.action.const === 'read');
   assert.deepEqual(read.required, ['action', 'workId']);
@@ -86,6 +87,10 @@ test('tool descriptors expose strict action-discriminated input schemas', async 
   const handoff = work.inputSchema.oneOf.find(schema => schema.properties.action.const === 'handoff');
   assert.deepEqual(handoff.required, ['action', 'workId', 'payload']);
   assert.deepEqual(handoff.properties.payload.required, ['stationId', 'operation']);
+  const workCancel = work.inputSchema.oneOf.find(schema => schema.properties.action.const === 'cancel');
+  const workComplete = work.inputSchema.oneOf.find(schema => schema.properties.action.const === 'complete');
+  assert.deepEqual(workCancel.required, ['action', 'workId']);
+  assert.deepEqual(workComplete.required, ['action', 'workId']);
 });
 
 test('runtime rejects arguments that violate the action-specific tool schema', async () => {
@@ -324,52 +329,27 @@ test('Work Pass preserves identity on handoff and caller cannot replace its pass
   assert.notEqual(reply.structuredContent.record.handoff.payload.workPassRef, spoofed);
 });
 
-test('CANCEL makes persisted Work Pass read-only and blocks operational actions', async () => {
+test('MIMIR CANCEL makes persisted Work Pass read-only, takes Work offline and blocks operational actions', async () => {
   const runtime = createCityRuntime({ store: createMemoryStore() });
   const server = service('cancel-pass', runtime, []);
-
   const input = (await (await rpc(server, 'tools/call', {
-    name: 'metropolis_reception',
-    arguments: {
-      action: 'input_information',
-      payload: { information: { title: 'Cancelable pass work' }, ownerSystem: 'PRISM' },
-    },
+    name:'metropolis_reception',
+    arguments:{action:'input_information',payload:{information:{title:'Cancelable pass work'},ownerSystem:'PRISM'}},
   })).json()).result;
-  const draftId = input.structuredContent.result.draftId;
-  await rpc(server, 'tools/call', { name: 'metropolis_reception', arguments: { action: 'review', draftId, payload: {} } });
-  await rpc(server, 'tools/call', { name: 'metropolis_reception', arguments: { action: 'ready_to_create', draftId, payload: {} } });
-  const created = (await (await rpc(server, 'tools/call', {
-    name: 'metropolis_reception',
-    arguments: { action: 'create_work', draftId, payload: {} },
-  })).json()).result;
-  const workId = created.structuredContent.result.workId;
-
-  const cancelled = (await (await rpc(server, 'tools/call', {
-    name: 'metropolis_reception',
-    arguments: { action: 'cancel', payload: { targetKind: 'WORK', targetId: workId } },
-  })).json()).result;
-  assert.equal(cancelled.isError, false);
-  assert.equal(cancelled.structuredContent.result.work.workPass.status, 'CANCELLED');
-
-  const read = (await (await rpc(server, 'tools/call', {
-    name: 'metropolis_work',
-    arguments: { action: 'read', workId },
-  })).json()).result;
-  assert.equal(read.isError, false);
-
-  const handoff = (await (await rpc(server, 'tools/call', {
-    name: 'metropolis_work',
-    arguments: { action: 'handoff', workId, payload: { stationId: 'FACTORY_STATION', operation: 'CODE' } },
-  })).json()).result;
-  assert.equal(handoff.isError, true);
-  assert.equal(handoff.structuredContent.reason, 'NO_GRANT');
-
-  const returned = (await (await rpc(server, 'tools/call', {
-    name: 'metropolis_work',
-    arguments: { action: 'return', workId, payload: {} },
-  })).json()).result;
-  assert.equal(returned.isError, true);
-  assert.equal(returned.structuredContent.reason, 'NO_GRANT');
+  const draftId=input.structuredContent.result.draftId;
+  await rpc(server,'tools/call',{name:'metropolis_reception',arguments:{action:'review',draftId,payload:{}}});
+  await rpc(server,'tools/call',{name:'metropolis_reception',arguments:{action:'ready_to_create',draftId,payload:{}}});
+  const created=(await (await rpc(server,'tools/call',{name:'metropolis_reception',arguments:{action:'create_work',draftId,payload:{}}})).json()).result;
+  const workId=created.structuredContent.result.workId;
+  const cancelled=(await (await rpc(server,'tools/call',{name:'metropolis_work',arguments:{action:'cancel',workId}})).json()).result;
+  assert.equal(cancelled.isError,false);
+  assert.equal(cancelled.structuredContent.record.workPass.status,'CANCELLED');
+  assert.equal(cancelled.structuredContent.record.online.status,'OFFLINE');
+  const read=(await (await rpc(server,'tools/call',{name:'metropolis_work',arguments:{action:'read',workId}})).json()).result;
+  assert.equal(read.isError,false);
+  const handoff=(await (await rpc(server,'tools/call',{name:'metropolis_work',arguments:{action:'handoff',workId,payload:{stationId:'FACTORY_STATION',operation:'CODE'}}})).json()).result;
+  assert.equal(handoff.isError,true);
+  assert.equal(handoff.structuredContent.reason,'NO_GRANT');
 });
 
 test('READY TO RESUME gates SEARCH then resumes the existing Work ID and checkpoint', async () => {
@@ -420,32 +400,17 @@ test('READY TO RESUME gates SEARCH then resumes the existing Work ID and checkpo
   assert.equal(resume.structuredContent.result.workTruthChanged, false);
   assert.equal(resume.structuredContent.result.go, true);
 });
-test('CANCEL selects its target after the command and can cancel Draft or Work', async () => {
-  const runtime = createCityRuntime({ store: createMemoryStore() });
-  await runtime.intake({ workId: 'WORK-CANCEL-ME', ownerSystem: 'FACTORY', requestedBy: 'GO' });
-  const server = service('one', runtime, []);
-
-  const input = (await (await rpc(server, 'tools/call', {
-    name: 'metropolis_reception',
-    arguments: { action: 'input_information', payload: { information: { title: 'Temporary draft' } } },
-  })).json()).result;
-  const draftId = input.structuredContent.result.draftId;
-
-  const cancelledDraft = (await (await rpc(server, 'tools/call', {
-    name: 'metropolis_reception',
-    arguments: { action: 'cancel', payload: { targetKind: 'DRAFT', targetId: draftId } },
-  })).json()).result;
-  assert.equal(cancelledDraft.isError, false);
-  assert.equal(cancelledDraft.structuredContent.result.targetKind, 'DRAFT');
-  assert.equal(cancelledDraft.structuredContent.result.draft.state, 'CANCELLED');
-
-  const cancelledWork = (await (await rpc(server, 'tools/call', {
-    name: 'metropolis_reception',
-    arguments: { action: 'cancel', payload: { targetKind: 'WORK', targetId: 'WORK-CANCEL-ME' } },
-  })).json()).result;
-  assert.equal(cancelledWork.isError, false);
-  assert.equal(cancelledWork.structuredContent.result.targetKind, 'WORK');
-  assert.equal(cancelledWork.structuredContent.result.work.state, 'CANCELLED');
+test('HERMES CANCEL handles Draft only while Work closure belongs to MIMIR', async () => {
+  const runtime=createCityRuntime({store:createMemoryStore()});
+  const server=service('one',runtime,[]);
+  const input=(await (await rpc(server,'tools/call',{name:'metropolis_reception',arguments:{action:'input_information',payload:{information:{title:'Temporary draft'}}}})).json()).result;
+  const draftId=input.structuredContent.result.draftId;
+  const cancelledDraft=(await (await rpc(server,'tools/call',{name:'metropolis_reception',arguments:{action:'cancel',payload:{targetKind:'DRAFT',targetId:draftId}}})).json()).result;
+  assert.equal(cancelledDraft.isError,false);
+  assert.equal(cancelledDraft.structuredContent.result.targetKind,'DRAFT');
+  const wrongSurface=(await (await rpc(server,'tools/call',{name:'metropolis_reception',arguments:{action:'cancel',payload:{targetKind:'WORK',targetId:'WORK-X'}}})).json()).result;
+  assert.equal(wrongSurface.isError,true);
+  assert.equal(wrongSurface.structuredContent.reason,'INVALID_ARGUMENT');
 });
 
 test('LIGHT cannot reuse GO grant or self-declare GO identity', async () => {
@@ -490,32 +455,22 @@ test('MCP notifications have no JSON-RPC response', async () => {
   assert.equal(accepted.status, 202);
   assert.equal(await accepted.text(), '');
 });
-test('return records evidence without accepting an agent claim of verified execution', async () => {
-  const runtime = createCityRuntime();
-  await runtime.intake({ workId: 'W1', ownerSystem: 'FACTORY' });
-  const server = service('one', runtime, [{ actor: 'GO', action: 'return', workId: 'W1' }]);
+test('return records Station OUT review first, then MIMIR organizes after GO review', async () => {
+  const runtime=createCityRuntime();
+  await runtime.intake({workId:'W1',ownerSystem:'FACTORY'});
+  const server=service('one',runtime,[{actor:'GO',action:'return',workId:'W1'}]);
   await arrive(server);
-
-  const spoofed = (await (await rpc(server, 'tools/call', {
-    name: 'metropolis_work',
-    arguments: { action: 'return', workId: 'W1', payload: { verified: true, evidenceRefs: ['evidence://one'] } },
-  })).json()).result;
-  assert.equal(spoofed.isError, true);
-  assert.equal(spoofed.structuredContent.reason, 'INVALID_ARGUMENT');
-
-  const review = (await (await rpc(server, 'tools/call', {
-    name: 'metropolis_work',
-    arguments: { action: 'return', workId: 'W1', payload: { evidenceRefs: ['evidence://one'] } },
-  })).json()).result;
-  assert.equal(review.isError, false);
-  assert.equal(review.structuredContent.record.return, null);
-  assert.equal(review.structuredContent.record.returnReview.status, 'CONFIRMATION_REQUIRED');
-  assert.equal(review.structuredContent.ownerExecutionVerified, false);
-
-  const reply = (await (await rpc(server, 'tools/call', { name: 'metropolis_work', arguments: { action: 'return', workId: 'W1', payload: { evidenceRefs: ['evidence://one'], confirmation: 'CONFIRM_RETURN' } } })).json()).result;
-  assert.equal(reply.structuredContent.record.return.verified, false);
-  assert.equal(reply.structuredContent.record.returnReview.status, 'CONFIRMED');
-  assert.equal(reply.structuredContent.ownerExecutionVerified, false);
+  const spoofed=(await (await rpc(server,'tools/call',{name:'metropolis_work',arguments:{action:'return',workId:'W1',payload:{verified:true,evidenceRefs:['evidence://one']}}})).json()).result;
+  assert.equal(spoofed.isError,true);
+  assert.equal(spoofed.structuredContent.reason,'INVALID_ARGUMENT');
+  const review=(await (await rpc(server,'tools/call',{name:'metropolis_work',arguments:{action:'return',workId:'W1',payload:{evidenceRefs:['evidence://one']}}})).json()).result;
+  assert.equal(review.isError,false);
+  assert.equal(review.structuredContent.record.return,null);
+  assert.equal(review.structuredContent.record.stationReturnReview.status,'GO_REVIEW_REQUIRED');
+  const reply=(await (await rpc(server,'tools/call',{name:'metropolis_work',arguments:{action:'return',workId:'W1',payload:{stationReviewed:true,updates:[]}}})).json()).result;
+  assert.equal(reply.structuredContent.record.returnReview.status,'ORGANIZED');
+  assert.equal(reply.structuredContent.record.stationReturnReview.status,'GO_REVIEWED');
+  assert.equal(reply.structuredContent.ownerExecutionVerified,false);
 });
 test('handoff cannot widen its destination or override its Work identity', async () => {
   const runtime = createCityRuntime();
