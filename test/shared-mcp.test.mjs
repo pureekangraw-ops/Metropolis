@@ -58,6 +58,78 @@ test('old room receives current schemas without creating another session', async
   assert.equal(current.reception.intakeDesk.securityVisibleAsNavigation, false);
   assert.equal(current.refresh.transportNotificationSupported, false);
 });
+
+test('tool descriptors expose strict action-discriminated input schemas', async () => {
+  const listed = await (await rpc(service(), 'tools/list', {}, 'invalid')).json();
+  const reception = listed.result.tools.find(tool => tool.name === 'metropolis_reception');
+  const work = listed.result.tools.find(tool => tool.name === 'metropolis_work');
+
+  assert.equal(reception.inputSchema.type, 'object');
+  assert.equal(reception.inputSchema.oneOf.length, 8);
+  assert.equal(work.inputSchema.type, 'object');
+  assert.equal(work.inputSchema.oneOf.length, 3);
+
+  const review = reception.inputSchema.oneOf.find(schema => schema.properties.action.const === 'review');
+  assert.deepEqual(review.required, ['action', 'draftId']);
+  assert.equal(review.additionalProperties, false);
+  assert.equal(review.properties.payload.additionalProperties, false);
+
+  const cancel = reception.inputSchema.oneOf.find(schema => schema.properties.action.const === 'cancel');
+  assert.equal(Object.hasOwn(cancel.properties, 'draftId'), false);
+  assert.deepEqual(cancel.required, ['action', 'payload']);
+  assert.deepEqual(cancel.properties.payload.required, ['targetKind', 'targetId']);
+
+  const read = work.inputSchema.oneOf.find(schema => schema.properties.action.const === 'read');
+  assert.deepEqual(read.required, ['action', 'workId']);
+  assert.equal(read.properties.payload.additionalProperties, false);
+
+  const handoff = work.inputSchema.oneOf.find(schema => schema.properties.action.const === 'handoff');
+  assert.deepEqual(handoff.required, ['action', 'workId', 'payload']);
+  assert.deepEqual(handoff.properties.payload.required, ['stationId', 'operation']);
+});
+
+test('runtime rejects arguments that violate the action-specific tool schema', async () => {
+  const server = service();
+
+  const badReview = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_reception',
+    arguments: { action: 'review', payload: {} },
+  })).json()).result;
+  assert.equal(badReview.isError, true);
+  assert.equal(badReview.structuredContent.reason, 'INVALID_ARGUMENT');
+
+  const badCancel = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_reception',
+    arguments: {
+      action: 'cancel',
+      draftId: 'DRAFT-SHOULD-NOT-BE-HERE',
+      payload: { targetKind: 'DRAFT', targetId: 'DRAFT-1' },
+    },
+  })).json()).result;
+  assert.equal(badCancel.isError, true);
+  assert.equal(badCancel.structuredContent.reason, 'INVALID_ARGUMENT');
+
+  const badRead = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_work',
+    arguments: { action: 'read', workId: 'W1', payload: { stationId: 'FACTORY_STATION' } },
+  })).json()).result;
+  assert.equal(badRead.isError, true);
+  assert.equal(badRead.structuredContent.reason, 'INVALID_ARGUMENT');
+
+  const badHandoff = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_work',
+    arguments: { action: 'handoff', workId: 'W1', payload: { stationId: 'FACTORY_STATION' } },
+  })).json()).result;
+  assert.equal(badHandoff.isError, true);
+  assert.equal(badHandoff.structuredContent.reason, 'INVALID_ARGUMENT');
+
+  const badReturn = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_work',
+    arguments: { action: 'return', workId: 'W1', payload: { evidenceRefs: [], unexpected: true } },
+  })).json()).result;
+  assert.equal(badReturn.isError, true);
+  assert.equal(badReturn.structuredContent.reason, 'INVALID_ARGUMENT');
+});
 test('arrival refreshes schema and shows only authorized current Work pointers without creating Work', async () => {
   const runtime = createCityRuntime();
   await runtime.intake({ workId: 'W1', checkpointId: 'CP-LIVE', ownerSystem: 'FACTORY', requestedBy: 'GO', inputRefs: ['private://payload'] });
