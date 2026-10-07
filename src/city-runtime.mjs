@@ -9,9 +9,10 @@ import {
 import { prepareMimirReturn } from './agents/mimir/return-desk.mjs';
 import { rotateHallData } from './secretary/product-life-cycle.mjs';
 import { createPixieReport } from './pixie/report-router.mjs';
+import { createHermesIntakeDesk } from './agents/hermes/intake-desk.mjs';
 
 export const CITY_COMPONENTS = Object.freeze(['METROPOLIS', 'CITY_HALL', 'WORK_SYSTEM', 'POST_OFFICE', 'PIXIE_SERVICE', 'SHOP', 'SPECTRUMSALE', 'THE_TAILOR']);
-export const WORK_STATE = Object.freeze({ RECEIVED: 'RECEIVED', HANDED_OFF: 'HANDED_OFF', RETURNED: 'RETURNED', UNKNOWN: 'UNKNOWN' });
+export const WORK_STATE = Object.freeze({ RECEIVED: 'RECEIVED', HANDED_OFF: 'HANDED_OFF', RETURNED: 'RETURNED', CANCELLED: 'CANCELLED', UNKNOWN: 'UNKNOWN' });
 
 function text(value, name) {
   if (typeof value !== 'string' || value.trim() === '') throw new TypeError(`${name}_REQUIRED`);
@@ -52,7 +53,7 @@ export function createCityRuntime({ store = createMemoryStore(), clock = () => n
   const mailboxes = new Map();
   const stations = Object.freeze({ ...stationRuntimes });
 
-  async function intake({ workId = idFactory(), checkpointId, ownerSystem, requestedBy = 'UNKNOWN', inputRefs = [] } = {}) {
+  async function intake({ workId = idFactory(), checkpointId, ownerSystem, requestedBy = 'UNKNOWN', inputRefs = [], intakeDraftId = null, intakeInformation = {} } = {}) {
     const id = text(workId, 'workId');
     const owner = text(ownerSystem, 'ownerSystem');
     const existing = await store.get(`work:${id}`);
@@ -78,6 +79,12 @@ export function createCityRuntime({ store = createMemoryStore(), clock = () => n
       state: WORK_STATE.RECEIVED,
       checkpointId: cp,
       inputRefs: [...inputRefs],
+      intakeDraftId: intakeDraftId == null ? null : text(intakeDraftId, 'intakeDraftId'),
+      intake: intakeDraftId == null ? null : {
+        draftId: text(intakeDraftId, 'intakeDraftId'),
+        title: typeof intakeInformation?.title === 'string' ? intakeInformation.title.trim() || null : null,
+        summary: typeof intakeInformation?.summary === 'string' ? intakeInformation.summary.trim() || null : null,
+      },
       handoff: null,
       returnReview: null,
       return: null,
@@ -355,7 +362,45 @@ export function createCityRuntime({ store = createMemoryStore(), clock = () => n
   }
 
   async function getWork(workId) { return store.get(`work:${text(workId, 'workId')}`); }
+
+  async function listWorks() {
+    if (typeof store.list !== 'function') throw new Error('WORK_LIST_NOT_SUPPORTED');
+    const rows = await store.list('work:');
+    return rows.map(row => clone(row?.value)).filter(Boolean);
+  }
+
+  async function cancelWork({ workId, actor = 'HERMES' } = {}) {
+    const id = text(workId, 'workId');
+    const record = await store.get(`work:${id}`);
+    if (!record) throw new Error('WORK_NOT_FOUND');
+    if (record.state === WORK_STATE.CANCELLED) return clone(record);
+    const now = clock();
+    const next = {
+      ...record,
+      state: WORK_STATE.CANCELLED,
+      cancellation: {
+        actor: text(actor, 'actor'),
+        cancelledAt: now,
+      },
+      history: [...(record.history || []), { state: WORK_STATE.CANCELLED, at: now }],
+      updatedAt: now,
+    };
+    await store.put(`work:${id}`, next);
+    return clone(next);
+  }
+
+  const reception = createHermesIntakeDesk({
+    store,
+    tabletRuntime,
+    createWork: intake,
+    getWork,
+    listWorks,
+    cancelWork,
+    clock,
+    idFactory,
+  });
+
   async function health() { return { service: 'metropolis', status: 'READY', sourceSha, components: Object.fromEntries(CITY_COMPONENTS.map((component) => [component, { status: 'READY' }])), mailboxCount: [...mailboxes.values()].filter((mailbox) => mailbox.status === MAILBOX_STATUS.OPEN).length, observedAt: clock() }; }
 
-  return Object.freeze({ intake, handoff, returnWork, registerMailbox, sendCargo, getWork, health, map: createCityMap() });
+  return Object.freeze({ intake, handoff, returnWork, cancelWork, registerMailbox, sendCargo, getWork, listWorks, reception, health, map: createCityMap() });
 }
