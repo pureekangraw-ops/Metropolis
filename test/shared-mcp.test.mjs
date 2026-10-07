@@ -246,6 +246,9 @@ test('Work Pass preserves identity on handoff and caller cannot replace its pass
   assert.equal(reply.structuredContent.record.checkpointId, created.checkpointId);
   assert.equal(reply.structuredContent.record.handoff.workPassRef, created.workPassRef);
   assert.equal(reply.structuredContent.record.handoff.payload.workPassRef, created.workPassRef);
+  assert.equal(reply.structuredContent.record.handoff.payload.workPass.passId, created.workPass.passId);
+  assert.equal(reply.structuredContent.record.handoff.payload.workPass.workId, created.workId);
+  assert.equal(reply.structuredContent.record.handoff.payload.workPass.checkpointId, created.checkpointId);
   assert.notEqual(reply.structuredContent.record.handoff.payload.workPassRef, spoofed);
 });
 
