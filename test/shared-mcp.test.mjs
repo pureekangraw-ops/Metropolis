@@ -453,9 +453,20 @@ test('LIGHT cannot reuse GO grant or self-declare GO identity', async () => {
   await runtime.intake({ workId: 'W1', ownerSystem: 'FACTORY' });
   const server = service('one', runtime);
   await arrive(server, 'light');
-  const reply = (await (await rpc(server, 'tools/call', { name: 'metropolis_work', arguments: { action: 'read', workId: 'W1', payload: { actor: 'GO' } } }, 'light')).json()).result;
-  assert.equal(reply.isError, true);
-  assert.equal(reply.structuredContent.reason, 'NO_GRANT');
+
+  const spoofed = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_work',
+    arguments: { action: 'read', workId: 'W1', payload: { actor: 'GO' } },
+  }, 'light')).json()).result;
+  assert.equal(spoofed.isError, true);
+  assert.equal(spoofed.structuredContent.reason, 'INVALID_ARGUMENT');
+
+  const denied = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_work',
+    arguments: { action: 'read', workId: 'W1' },
+  }, 'light')).json()).result;
+  assert.equal(denied.isError, true);
+  assert.equal(denied.structuredContent.reason, 'NO_GRANT');
 });
 test('read uses the current Work context without caller checkpoint input', async () => {
   const runtime = createCityRuntime();
@@ -484,7 +495,19 @@ test('return records evidence without accepting an agent claim of verified execu
   await runtime.intake({ workId: 'W1', ownerSystem: 'FACTORY' });
   const server = service('one', runtime, [{ actor: 'GO', action: 'return', workId: 'W1' }]);
   await arrive(server);
-  const review = (await (await rpc(server, 'tools/call', { name: 'metropolis_work', arguments: { action: 'return', workId: 'W1', payload: { verified: true, evidenceRefs: ['evidence://one'] } } })).json()).result;
+
+  const spoofed = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_work',
+    arguments: { action: 'return', workId: 'W1', payload: { verified: true, evidenceRefs: ['evidence://one'] } },
+  })).json()).result;
+  assert.equal(spoofed.isError, true);
+  assert.equal(spoofed.structuredContent.reason, 'INVALID_ARGUMENT');
+
+  const review = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_work',
+    arguments: { action: 'return', workId: 'W1', payload: { evidenceRefs: ['evidence://one'] } },
+  })).json()).result;
+  assert.equal(review.isError, false);
   assert.equal(review.structuredContent.record.return, null);
   assert.equal(review.structuredContent.record.returnReview.status, 'CONFIRMATION_REQUIRED');
   assert.equal(review.structuredContent.ownerExecutionVerified, false);
@@ -499,13 +522,29 @@ test('handoff cannot widen its destination or override its Work identity', async
   await runtime.intake({ workId: 'W1', ownerSystem: 'FACTORY' });
   const server = service('one', runtime, [{ actor: 'GO', action: 'handoff', workId: 'W1', stationId: 'FACTORY_STATION', operation: 'CODE' }]);
   await arrive(server);
-  const args = { action: 'handoff', workId: 'W1', payload: { stationId: 'OTHER_STATION', operation: 'CODE' } };
-  const denied = (await (await rpc(server, 'tools/call', { name: 'metropolis_work', arguments: args })).json()).result;
+
+  const denied = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_work',
+    arguments: { action: 'handoff', workId: 'W1', payload: { stationId: 'OTHER_STATION', operation: 'CODE' } },
+  })).json()).result;
   assert.equal(denied.structuredContent.reason, 'DESTINATION_NOT_GRANTED');
-  args.payload.stationId = 'FACTORY_STATION';
-  args.payload.workId = 'W2';
-  args.payload.actor = 'LIGHT';
-  const accepted = (await (await rpc(server, 'tools/call', { name: 'metropolis_work', arguments: args })).json()).result;
+
+  const spoofed = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_work',
+    arguments: {
+      action: 'handoff',
+      workId: 'W1',
+      payload: { stationId: 'FACTORY_STATION', operation: 'CODE', workId: 'W2', actor: 'LIGHT' },
+    },
+  })).json()).result;
+  assert.equal(spoofed.isError, true);
+  assert.equal(spoofed.structuredContent.reason, 'INVALID_ARGUMENT');
+
+  const accepted = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_work',
+    arguments: { action: 'handoff', workId: 'W1', payload: { stationId: 'FACTORY_STATION', operation: 'CODE' } },
+  })).json()).result;
+  assert.equal(accepted.isError, false);
   assert.equal(accepted.structuredContent.record.workId, 'W1');
   assert.equal(accepted.structuredContent.record.handoff.actor, 'GO');
   assert.equal(Object.hasOwn(accepted.structuredContent.record.handoff, 'railId'), false);
