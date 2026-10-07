@@ -1,5 +1,5 @@
 const READY = 'READY';
-export const FACTORY_STATION_PROTOCOL = 'METROPOLIS_FACTORY_STATION_V1';
+export const FACTORY_STATION_PROTOCOL = 'METROPOLIS_FACTORY_STATION_V2';
 
 const text = value => String(value ?? '').trim();
 
