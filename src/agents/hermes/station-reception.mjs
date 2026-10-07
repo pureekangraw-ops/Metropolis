@@ -20,6 +20,14 @@ function tabletPointer(work = {}) {
     ownerSystem: work.ownerSystem == null ? null : text(work.ownerSystem),
     updatedAt: work.updatedAt || null,
     authorizedActions: Object.freeze([...(work.authorizedActions || [])]),
+    tablet: work.tablet ? Object.freeze({
+      tabletId: work.tablet?.tablet?.tabletId || null,
+      version: work.tablet?.tablet?.version || null,
+      status: work.tablet?.status || 'UNKNOWN',
+      verified: work.tablet?.verified === true,
+      storageRef: work.tablet?.storageRef || null,
+      checksum: work.tablet?.checksum || null,
+    }) : null,
   });
 }
 
