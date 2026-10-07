@@ -137,7 +137,11 @@ export function createCityRuntime({ store = createMemoryStore(), clock = () => n
     const op = text(operation, 'operation');
     const stationRuntime = stations[station];
     const passRef = workPassRef(record.workPass);
-    const transportPayload = { ...clone(payload), workPassRef: passRef };
+    const transportPayload = {
+      ...clone(payload),
+      workPassRef: passRef,
+      workPass: clone(record.workPass),
+    };
     const external = stationRuntime?.handoff
       ? await stationRuntime.handoff({ workId: id, checkpointId: record.checkpointId, stationId: station, operation: op, actor, payload: transportPayload })
       : null;
