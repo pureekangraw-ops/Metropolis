@@ -16,6 +16,11 @@ test('HERMES reception exposes only existing authorized Work pointers and create
   });
   assert.equal(reception.staff.id, 'HERMES');
   assert.equal(reception.staff.ownsWorkTruth, false);
+  assert.equal(reception.intakeDesk.anchor, 'WORK_FLOW');
+  assert.equal(reception.intakeDesk.securityVisibleAsNavigation, false);
+  assert.deepEqual(reception.intakeDesk.flow.stages, ['INPUT_INFORMATION', 'DRAFT', 'REVIEW']);
+  assert.deepEqual(reception.intakeDesk.flow.decisions, ['READY_TO_CREATE', 'READY_TO_RESUME']);
+  assert.equal(Object.hasOwn(reception.tabletDesk.pointers[0], 'authorizedActions'), false);
   assert.equal(reception.lostAndFound.createsWork, false);
   assert.deepEqual(reception.lostAndFound.candidates.map(item => item.workId), ['W1']);
   assert.equal(findHermesLostWork(reception, 'W1').checkpointId, 'CP1');
