@@ -102,6 +102,10 @@ test('Factory round trip preserves Work/Checkpoint and stays UNKNOWN until DWARF
   assert.equal(returned.return.verified, true);
   assert.equal(returned.return.evidenceRefs.includes('factory-station://receipt-1'), true);
   assert.equal(returned.return.readback.domainVerified, true);
+  assert.equal(returned.return.postal.status, 'DELIVERED');
+  assert.equal(returned.return.postal.route.originBranch, 'FACTORY_POST_OFFICE');
+  assert.equal(returned.return.postal.route.destinationBranch, 'CENTRAL_POST_OFFICE');
+  assert.equal(returned.dataLifecycle.some(entry => entry.producer === 'POST_OFFICE' && entry.kind === 'DELIVERY_RECEIPT'), true);
   assert.equal(returned.workId, 'WORK-1');
   assert.equal(returned.checkpointId, 'CP-1');
 });
