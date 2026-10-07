@@ -218,9 +218,9 @@ export function createMetropolisMcp({ runtime, authenticate, grants = [], source
         } else if (action === 'ready_to_resume') {
           result = await runtime.reception.ready({ actor, draftId: args.draftId, decision: 'READY_TO_RESUME' });
         } else if (action === 'search_work') {
-          result = await runtime.reception.search({ actor, query: payload.query, limit: payload.limit });
+          result = await runtime.reception.search({ actor, draftId: args.draftId, query: payload.query, limit: payload.limit });
         } else if (action === 'resume_work') {
-          result = await runtime.reception.resume({ actor, workId: payload.workId });
+          result = await runtime.reception.resume({ actor, draftId: args.draftId, workId: payload.workId });
         } else if (action === 'cancel') {
           result = await runtime.reception.cancel({ actor, targetKind: payload.targetKind, targetId: payload.targetId });
         }
