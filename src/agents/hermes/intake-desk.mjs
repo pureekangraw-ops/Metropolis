@@ -4,11 +4,11 @@ export const HERMES_INTAKE_FLOW = Object.freeze({
   commands: Object.freeze({
     READY_TO_CREATE: Object.freeze(['CREATE_WORK']),
     READY_TO_RESUME: Object.freeze(['SEARCH_WORK', 'RESUME_WORK']),
-    CANCEL: Object.freeze(['CANCEL', 'SELECT_TARGET']),
+    CANCEL: Object.freeze(['CANCEL_DRAFT']),
   }),
   workIdRule: 'WORK_ID_IS_CREATED_ONLY_BY_CREATE_WORK',
   resumeRule: 'RESUME_KEEPS_EXISTING_WORK_ID_AND_LATEST_CHECKPOINT',
-  cancelRule: 'CANCEL_SELECTS_THE_TARGET_AFTER_THE_COMMAND',
+  cancelRule: 'HERMES_CANCEL_APPLIES_TO_DRAFT_ONLY; WORK_CANCEL_AND_COMPLETE_BELONG_TO_MIMIR',
   securityRule: 'POLICY_IS_ENFORCED_BEHIND_THE_FLOW_NOT_USED_AS_HERMES_NAVIGATION',
 });
 
@@ -43,6 +43,7 @@ function searchableWork(record = {}) {
     record.intake?.draftId,
     record.intake?.title,
     record.intake?.summary,
+    ...(Array.isArray(record.journeys) ? record.journeys.flatMap(journey => [journey?.journeyId, journey?.stationId]) : []),
   ].filter(Boolean).join(' ').toLowerCase();
 }
 
@@ -52,12 +53,12 @@ export function createHermesIntakeDesk({
   createWork,
   getWork,
   listWorks,
-  cancelWork,
+  resumeWork,
   clock = () => new Date().toISOString(),
   idFactory = () => crypto.randomUUID(),
 } = {}) {
   if (!store || typeof store.get !== 'function' || typeof store.put !== 'function') throw new Error('INTAKE_STORE_REQUIRED');
-  if (typeof createWork !== 'function' || typeof getWork !== 'function' || typeof listWorks !== 'function' || typeof cancelWork !== 'function') {
+  if (typeof createWork !== 'function' || typeof getWork !== 'function' || typeof listWorks !== 'function' || typeof resumeWork !== 'function') {
     throw new Error('WORK_RUNTIME_REQUIRED');
   }
 
@@ -249,9 +250,10 @@ export function createHermesIntakeDesk({
 
     const id = text(workId);
     if (!id) throw new Error('WORK_ID_REQUIRED');
-    const record = await getWork(id);
-    if (!record) throw new Error('WORK_NOT_FOUND');
-    if (record.state === 'CANCELLED') throw new Error('WORK_CANCELLED');
+    const existing = await getWork(id);
+    if (!existing) throw new Error('WORK_NOT_FOUND');
+    if (['CANCELLED', 'COMPLETED'].includes(existing.state)) throw new Error('WORK_CLOSED');
+    const record = await resumeWork({ workId: id, actor: who });
 
     const resumedDraft = await persistDraft({
       ...draft,
@@ -281,35 +283,13 @@ export function createHermesIntakeDesk({
     const kind = text(targetKind).toUpperCase();
     const id = text(targetId);
     if (!who) throw new Error('ACTOR_REQUIRED');
-    if (!['DRAFT', 'WORK'].includes(kind)) throw new Error('CANCEL_TARGET_KIND_INVALID');
+    if (kind !== 'DRAFT') throw new Error('WORK_CLOSURE_BELONGS_TO_MIMIR');
     if (!id) throw new Error('CANCEL_TARGET_ID_REQUIRED');
-
-    if (kind === 'DRAFT') {
-      const record = await store.get(`intake:${id}`);
-      assertMutable(record);
-      assertActor(record, who);
-      const cancelled = await persistDraft({
-        ...record,
-        state: INTAKE_STATE.CANCELLED,
-        decision: null,
-        cancelledAt: clock(),
-        cancelledBy: who,
-      }, who);
-      return Object.freeze({
-        status: 'CANCELLED',
-        targetKind: 'DRAFT',
-        targetId: id,
-        draft: cancelled,
-      });
-    }
-
-    const work = await cancelWork({ workId: id, actor: who });
-    return Object.freeze({
-      status: 'CANCELLED',
-      targetKind: 'WORK',
-      targetId: id,
-      work: clone(work),
-    });
+    const record = await store.get(`intake:${id}`);
+    assertMutable(record);
+    assertActor(record, who);
+    const cancelled = await persistDraft({ ...record, state: INTAKE_STATE.CANCELLED, decision: null, cancelledAt: clock(), cancelledBy: who }, who);
+    return Object.freeze({ status: 'CANCELLED', targetKind: 'DRAFT', targetId: id, draft: cancelled });
   }
 
   async function getDraft(draftId) {

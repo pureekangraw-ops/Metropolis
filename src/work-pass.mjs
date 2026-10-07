@@ -1,7 +1,6 @@
 export const WORK_PASS_VERSION = 'WORK_PASS_V1';
 export const WORK_PASS_STATUS = Object.freeze({
-  ACTIVE: 'ACTIVE',
-  CANCELLED: 'CANCELLED',
+  ACTIVE:'ACTIVE', CANCELLED:'CANCELLED', COMPLETED:'COMPLETED',
 });
 
 const text = (value) => String(value ?? '').trim();
@@ -35,7 +34,7 @@ export function createWorkPass({
     actor: holder,
     status: WORK_PASS_STATUS.ACTIVE,
     permissions: Object.freeze({
-      actions: Object.freeze(['read', 'handoff', 'return']),
+      actions: Object.freeze(['read', 'handoff', 'return', 'cancel', 'complete']),
       handoff: Object.freeze(unique(handoffStations).map(stationId => Object.freeze({ stationId }))),
     }),
     issuedBy: 'CITY_HALL',
@@ -56,8 +55,9 @@ export function inspectWorkPass(pass, { workId, checkpointId, actor, workState =
     return Object.freeze({ valid: false, reason: 'WORK_PASS_SCOPE_MISMATCH', actions: Object.freeze([]) });
   }
 
-  if (pass.status === WORK_PASS_STATUS.CANCELLED || text(workState).toUpperCase() === 'CANCELLED') {
-    return Object.freeze({ valid: true, reason: 'WORK_PASS_CANCELLED_READ_ONLY', actions: Object.freeze(['read']) });
+  if ([WORK_PASS_STATUS.CANCELLED, WORK_PASS_STATUS.COMPLETED].includes(pass.status)
+    || ['CANCELLED','COMPLETED'].includes(text(workState).toUpperCase())) {
+    return Object.freeze({ valid:true, reason:'WORK_PASS_CLOSED_READ_ONLY', actions:Object.freeze(['read']) });
   }
   if (pass.status !== WORK_PASS_STATUS.ACTIVE) {
     return Object.freeze({ valid: false, reason: 'WORK_PASS_INACTIVE', actions: Object.freeze([]) });
@@ -75,14 +75,19 @@ export function workPassAllowsHandoff(pass, { workId, checkpointId, actor, workS
     .some(rule => text(rule?.stationId) === destination);
 }
 
-export function cancelWorkPass(pass, { cancelledAt = new Date().toISOString(), cancelledBy = 'CITY_HALL' } = {}) {
+export function closeWorkPass(pass,{status=WORK_PASS_STATUS.CANCELLED,closedAt=new Date().toISOString(),closedBy='MIMIR'}={}) {
   if (!pass) return null;
-  return Object.freeze({
-    ...clone(pass),
-    status: WORK_PASS_STATUS.CANCELLED,
-    cancelledAt: required(cancelledAt, 'CANCELLED_AT'),
-    cancelledBy: required(cancelledBy, 'CANCELLED_BY'),
-  });
+  const nextStatus=text(status).toUpperCase();
+  if (![WORK_PASS_STATUS.CANCELLED,WORK_PASS_STATUS.COMPLETED].includes(nextStatus)) throw new Error('WORK_PASS_CLOSE_STATUS_INVALID');
+  const at=required(closedAt,'CLOSED_AT'); const by=required(closedBy,'CLOSED_BY');
+  return Object.freeze({...clone(pass),status:nextStatus,closedAt:at,closedBy:by,
+    ...(nextStatus===WORK_PASS_STATUS.CANCELLED?{cancelledAt:at,cancelledBy:by}:{completedAt:at,completedBy:by})});
+}
+export function cancelWorkPass(pass,{cancelledAt=new Date().toISOString(),cancelledBy='MIMIR'}={}) {
+  return closeWorkPass(pass,{status:WORK_PASS_STATUS.CANCELLED,closedAt:cancelledAt,closedBy:cancelledBy});
+}
+export function completeWorkPass(pass,{completedAt=new Date().toISOString(),completedBy='MIMIR'}={}) {
+  return closeWorkPass(pass,{status:WORK_PASS_STATUS.COMPLETED,closedAt:completedAt,closedBy:completedBy});
 }
 
 export function workPassRef(pass) {

@@ -1,6 +1,6 @@
 import { createHermesReception } from './agents/hermes/station-reception.mjs';
 import { inspectWorkPass, workPassAllowsHandoff } from './work-pass.mjs';
-const ACTIONS = ['read', 'handoff', 'return'];
+const ACTIONS = ['read','handoff','return','cancel','complete'];
 const RECEPTION_ACTIONS = ['input_information', 'review', 'ready_to_create', 'create_work', 'ready_to_resume', 'search_work', 'resume_work', 'cancel'];
 const PROTOCOLS = ['2025-03-26', '2025-06-18', '2025-11-25'];
 const string = { type: 'string', minLength: 1 };
@@ -17,25 +17,11 @@ const profileOutputSchema = Object.freeze({
   additionalProperties: false,
 });
 const actionSchemas = {
-  read: { type: 'object', properties: {}, additionalProperties: false },
-  handoff: { type: 'object', properties: { stationId: string, operation: string, payload: { type: 'object' } }, required: ['stationId', 'operation'], additionalProperties: false },
-  return: {
-    type: 'object',
-    properties: {
-      readback: { type: 'object' },
-      evidenceRefs: { type: 'array', items: string },
-      updates: {
-        type: 'array',
-        items: {
-          type: 'object',
-          properties: { kind: string, valueRef: string, note: string },
-          additionalProperties: false,
-        },
-      },
-      confirmation: { type: 'string', enum: ['CONFIRM_RETURN'] },
-    },
-    additionalProperties: false,
-  },
+  read:{type:'object',properties:{},additionalProperties:false},
+  handoff:{type:'object',properties:{stationId:string,operation:string,payload:{type:'object'}},required:['stationId','operation'],additionalProperties:false},
+  return:{type:'object',properties:{readback:{type:'object'},evidenceRefs:{type:'array',items:string},updates:{type:'array',items:{type:'object',properties:{kind:string,valueRef:string,note:string},additionalProperties:false}},stationReviewed:{type:'boolean'}},additionalProperties:false},
+  cancel:{type:'object',properties:{},additionalProperties:false},
+  complete:{type:'object',properties:{},additionalProperties:false},
 };
 
 const receptionActionSchemas = {
@@ -67,7 +53,7 @@ const receptionActionSchemas = {
   cancel: {
     type: 'object',
     properties: {
-      targetKind: { type: 'string', enum: ['DRAFT', 'WORK'] },
+      targetKind: { type: 'string', enum: ['DRAFT'] },
       targetId: string,
     },
     required: ['targetKind', 'targetId'],
@@ -130,7 +116,7 @@ const tools = [
   {
     name: 'metropolis_reception',
     title: 'Use HERMES Reception',
-    description: 'Capture intake information as a Draft Tablet, review it, then CREATE a new Work ID or SEARCH and RESUME an existing Work. CANCEL selects its target after the command. Work IDs are never caller-created.',
+    description: 'Capture intake information as a Draft Tablet, review it, then CREATE a new Work ID or SEARCH and RESUME an existing Work. HERMES cancels Drafts only; Work CANCEL/COMPLETE belongs to MIMIR through metropolis_work.',
     inputSchema: receptionInputSchema,
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     securitySchemes: oauthSecurity,
@@ -138,7 +124,7 @@ const tools = [
   {
     name: 'metropolis_work',
     title: 'Use Existing Metropolis Work',
-    description: 'Operate on an existing City Hall Work. CREATE and RESUME belong to HERMES Reception; this tool never creates a caller-supplied Work ID.',
+    description: 'Operate on existing Work. Station RETURN records OUT and asks GO to review returned items; MIMIR organizes the reviewed packet. CANCEL/COMPLETE are MIMIR lifecycle actions.',
     inputSchema: workInputSchema,
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     securitySchemes: oauthSecurity,
@@ -242,6 +228,8 @@ export function createMetropolisMcp({ runtime, authenticate, grants = [], source
           accessSource: explicit.length > 0 ? 'EXPLICIT_POLICY' : 'PERSISTED_WORK_PASS',
           workPassRef: record.workPassRef || null,
           tablet: record.tablet || null,
+          online: record.online || null,
+          latestJourney: Array.isArray(record.journeys) && record.journeys.length ? record.journeys.at(-1) : null,
         };
       } catch {
         return { workId, present: null, state: 'UNKNOWN', checkpointId: null, ownerSystem: null, updatedAt: null, authorizedActions: authorizedActions.filter(grant => grant.workId === workId).map(grant => grant.action), reason: 'CURRENT_READ_FAILED' };
@@ -263,6 +251,7 @@ export function createMetropolisMcp({ runtime, authenticate, grants = [], source
         release: { version, sourceSha },
         schema: { schemaHash, refreshedAt: observedAt, mode: 'FRESH_ON_ARRIVAL' },
         works,
+        onlineWorks: works.filter(work => work.present === true && work.online?.status === 'ONLINE'),
       },
       reception: createHermesReception({ actor, works, observedAt }),
       refresh: { mode: 'READ_CURRENT_ON_EVERY_CALL', transportNotificationSupported: false, clientReconnectMayBeRequired: true, currentSnapshotIncluded: true },
@@ -312,7 +301,7 @@ export function createMetropolisMcp({ runtime, authenticate, grants = [], source
 
         return toolResult({ actor, action, result });
       } catch (error) {
-        const known = /^(.*_REQUIRED|DRAFT_[A-Z0-9_]+|READY_[A-Z0-9_]+|OWNER_SYSTEM_REQUIRED|INFORMATION_INVALID|INPUT_REFS_INVALID|SEARCH_QUERY_REQUIRED|WORK_NOT_FOUND|WORK_CANCELLED|CANCEL_[A-Z0-9_]+|INVALID_ARGUMENT|INVALID_PAYLOAD|ACTION_NOT_FOUND)$/;
+        const known = /^(.*_REQUIRED|DRAFT_[A-Z0-9_]+|READY_[A-Z0-9_]+|OWNER_SYSTEM_REQUIRED|INFORMATION_INVALID|INPUT_REFS_INVALID|SEARCH_QUERY_REQUIRED|WORK_NOT_FOUND|WORK_CANCELLED|WORK_CLOSED|WORK_CLOSURE_BELONGS_TO_MIMIR|CANCEL_[A-Z0-9_]+|INVALID_ARGUMENT|INVALID_PAYLOAD|ACTION_NOT_FOUND)$/;
         return toolResult({ reason: known.test(error.message) ? error.message : 'RECEPTION_OPERATION_FAILED' }, true);
       }
     }
@@ -344,9 +333,12 @@ export function createMetropolisMcp({ runtime, authenticate, grants = [], source
           readback: payload.readback,
           evidenceRefs: payload.evidenceRefs || [],
           updates: payload.updates || [],
-          confirmation: payload.confirmation || null,
-          verified: false,
+          stationReviewed: payload.stationReviewed === true,
         });
+      } else if (action === 'cancel') {
+        record = await runtime.cancelWork({ workId, actor:'MIMIR', requestedBy:actor });
+      } else if (action === 'complete') {
+        record = await runtime.completeWork({ workId, actor:'MIMIR', requestedBy:actor });
       } else throw new Error('ACTION_NOT_FOUND');
       const readback = await runtime.getWork(workId);
       if (JSON.stringify(record) !== JSON.stringify(readback)) throw new Error('WRITE_READBACK_MISMATCH');
@@ -357,7 +349,7 @@ export function createMetropolisMcp({ runtime, authenticate, grants = [], source
           : false;
       return toolResult({ actor, record: readback, readbackVerified: true, ownerExecutionVerified });
     } catch (error) {
-      const known = /^(.*_REQUIRED|WORK_NOT_FOUND|WORK_ALREADY_EXISTS|INVALID_ARGUMENT|INVALID_PAYLOAD|OWNER_NOT_GRANTED|DESTINATION_NOT_GRANTED|ACTION_NOT_FOUND|WRITE_READBACK_MISMATCH|FACTORY_[A-Z0-9_]+)$/;
+      const known = /^(.*_REQUIRED|WORK_NOT_FOUND|WORK_ALREADY_EXISTS|WORK_NOT_ONLINE|WORK_CANCELLED|INVALID_ARGUMENT|INVALID_PAYLOAD|OWNER_NOT_GRANTED|DESTINATION_NOT_GRANTED|ACTION_NOT_FOUND|WRITE_READBACK_MISMATCH|FACTORY_[A-Z0-9_]+)$/;
       return toolResult({ reason: known.test(error.message) ? error.message : 'WORK_OPERATION_FAILED' }, true);
     }
   }

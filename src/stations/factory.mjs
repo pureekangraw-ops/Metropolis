@@ -1,5 +1,9 @@
 const READY = 'READY';
 export const FACTORY_STATION_PROTOCOL = 'METROPOLIS_FACTORY_STATION_V2';
+export const FACTORY_BRANCH_PROFILE = Object.freeze({
+  branchId:'FACTORY_BRANCH', stationId:'FACTORY_STATION', destinationId:'FACTORY',
+  preflight:'FACTORY_HEALTH', returnInspection:'DWARF_VERIFY',
+});
 
 const text = value => String(value ?? '').trim();
 
@@ -49,6 +53,7 @@ export function createFactoryRailAdapter({
     return {
       status: ready ? READY : 'UNKNOWN',
       identity: { stationId: station.stationId, railId: rail.railId, ownerSystem: station.ownerSystem },
+      branchProfile: FACTORY_BRANCH_PROFILE,
       scope: ['FACTORY_HANDOFF'],
       capabilities: { FACTORY_HANDOFF: { status: ready ? READY : 'UNKNOWN', reason: ready ? 'FACTORY_HEALTH_READY' : 'FACTORY_HEALTH_UNVERIFIED' } },
       connectivity: { status: response.ok ? READY : 'UNKNOWN', httpStatus: response.status },
@@ -111,5 +116,5 @@ export function createFactoryRailAdapter({
     };
   }
 
-  return Object.freeze({ probe, dispatch, readback });
+  return Object.freeze({ profile: FACTORY_BRANCH_PROFILE, probe, dispatch, readback });
 }
