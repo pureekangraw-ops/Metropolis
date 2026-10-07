@@ -3,6 +3,7 @@ import { createMetropolisMcp, json } from './shared-mcp.mjs';
 import { createOAuthHandler, verifyAccessToken } from './mcp-oauth.mjs';
 import { SOURCE_SHA } from './mcp-source-identity.mjs';
 import { createFactoryStationRuntime } from './factory-station-runtime.mjs';
+import { createTabletRuntime } from './tablet-runtime.mjs';
 
 export async function bufferRequest(request, { timeoutMs = 10000, maxBytes = 65536 } = {}) {
   if (!request.body) return request;
@@ -76,10 +77,15 @@ export function createGateway({ env, storage, sourceSha = SOURCE_SHA } = {}) {
       baseUrl: env.FACTORY_RUNTIME_URL,
       sharedSecret: env.METROPOLIS_FACTORY_SHARED_SECRET,
     });
+    const tabletRuntime = createTabletRuntime({
+      bucket: env.TABLET_STORAGE,
+      sourceSha,
+    });
     const runtime = createCityRuntime({
       sourceSha,
       store: { get: key => storage.get(key), async put(key, value) { await storage.put(key, value); return value; } },
       stationRuntimes: { FACTORY_STATION: factoryStation },
+      tabletRuntime,
     });
     oauth = createOAuthHandler(cfg);
     resourceMetadataUrl = cfg.issuer + '/.well-known/oauth-protected-resource';
