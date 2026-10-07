@@ -504,3 +504,41 @@ test('handoff cannot widen its destination or override its Work identity', async
   assert.equal(accepted.structuredContent.record.handoff.actor, 'GO');
   assert.equal(Object.hasOwn(accepted.structuredContent.record.handoff, 'railId'), false);
 });
+
+
+test('LIGHT full-route grant can hand off and return the exact Work without widening Work identity', async () => {
+  const runtime = createCityRuntime();
+  await runtime.intake({ workId: 'W-LIGHT', ownerSystem: 'GO' });
+  const server = service('light-full', runtime, [
+    { actor: 'LIGHT', action: 'read', workId: 'W-LIGHT' },
+    { actor: 'LIGHT', action: 'handoff', workId: 'W-LIGHT', stationId: '*', operation: '*' },
+    { actor: 'LIGHT', action: 'return', workId: 'W-LIGHT' },
+  ]);
+
+  const manifest = await arrive(server, 'light');
+  const pointer = manifest.current.works.find(work => work.workId === 'W-LIGHT');
+  assert.deepEqual(pointer.authorizedActions, ['read', 'handoff', 'return']);
+
+  const handoff = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_work',
+    arguments: {
+      action: 'handoff',
+      workId: 'W-LIGHT',
+      payload: { stationId: 'NOTION_STATION', operation: 'COUNTER_HANDOFF' },
+    },
+  }, 'light')).json()).result;
+  assert.equal(handoff.isError, false);
+  assert.equal(handoff.structuredContent.record.workId, 'W-LIGHT');
+  assert.equal(handoff.structuredContent.record.handoff.actor, 'LIGHT');
+
+  const returned = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_work',
+    arguments: {
+      action: 'return',
+      workId: 'W-LIGHT',
+      payload: { evidenceRefs: ['evidence://light'] },
+    },
+  }, 'light')).json()).result;
+  assert.equal(returned.isError, false);
+  assert.equal(returned.structuredContent.record.workId, 'W-LIGHT');
+});
