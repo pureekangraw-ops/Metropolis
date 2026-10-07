@@ -522,12 +522,18 @@ export function createOAuthHandler(config = {}) {
         }, 200, { 'cache-control': 'no-store' });
       }
     } catch (error) {
-      console.warn('OAUTH_BAD_REQUEST', {
-        path: url.pathname,
-        method: request.method,
-        reason: String(error?.message || 'unknown'),
-      });
-      return json({ code: 'OAUTH_BAD_REQUEST' }, 400);
+      const reason = String(error?.message || 'unknown');
+      console.warn('OAUTH_BAD_REQUEST', { path: url.pathname, method: request.method, reason });
+      const safeCodes = {
+        'invalid client': 'OAUTH_INVALID_CLIENT',
+        'invalid redirect uri': 'OAUTH_INVALID_REDIRECT_URI',
+        'S256 PKCE is required': 'OAUTH_PKCE_REQUIRED',
+        'invalid code challenge': 'OAUTH_INVALID_CODE_CHALLENGE',
+        'invalid resource': 'OAUTH_INVALID_RESOURCE',
+        'unsupported response type': 'OAUTH_UNSUPPORTED_RESPONSE_TYPE',
+        'scope identity mismatch': 'OAUTH_SCOPE_IDENTITY_MISMATCH',
+      };
+      return json({ code: safeCodes[reason] || 'OAUTH_BAD_REQUEST' }, 400);
     }
 
     return json({ code: 'NOT_FOUND' }, 404);
