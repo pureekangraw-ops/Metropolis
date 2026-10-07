@@ -30,12 +30,13 @@ test('Factory round trip preserves Work/Checkpoint and stays UNKNOWN until DWARF
         receiptId: 'receipt-1',
         workId: receivedPayload.workId,
         checkpointId: receivedPayload.checkpointId,
+        workPassRef: receivedPayload.workPassRef,
         sourceSha: receivedPayload.expectedSourceSha,
         stationId: 'FACTORY-STATION',
         boundaryVerified: true,
         domainVerified,
         evidenceRef: 'factory-station://receipt-1',
-        result: domainVerified ? { workId: receivedPayload.workId, checkpointId: receivedPayload.checkpointId } : null,
+        result: domainVerified ? { workId: receivedPayload.workId, checkpointId: receivedPayload.checkpointId, workPassRef: receivedPayload.workPassRef } : null,
       });
     }
     throw new Error('unexpected fetch ' + target);
@@ -56,6 +57,7 @@ test('Factory round trip preserves Work/Checkpoint and stays UNKNOWN until DWARF
     checkpointId: 'CP-1',
     ownerSystem: 'CITY_HALL',
     requestedBy: 'GO',
+    workPassActor: 'GO',
   });
 
   const handed = await city.handoff({
@@ -75,6 +77,9 @@ test('Factory round trip preserves Work/Checkpoint and stays UNKNOWN until DWARF
   assert.equal(receivedPayload.expectedSourceSha, SOURCE_SHA);
   assert.equal(receivedPayload.workId, 'WORK-1');
   assert.equal(receivedPayload.checkpointId, 'CP-1');
+  assert.equal(receivedPayload.workPass.workId, 'WORK-1');
+  assert.equal(receivedPayload.workPass.checkpointId, 'CP-1');
+  assert.equal(receivedPayload.workPassRef, `work-pass://${receivedPayload.workPass.passId}`);
 
   const premature = await city.returnWork({
     workId: 'WORK-1',
