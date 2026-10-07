@@ -4,7 +4,7 @@ import { createFactoryRailAdapter } from '../src/stations/factory.mjs';
 
 const station={stationId:'FACTORY_STATION',ownerSystem:'FACTORY'}; const rail={railId:'RAIL-FACTORY'};
 test('Factory adapter probes live-ready shape', async()=>{
- const adapter=createFactoryRailAdapter({baseUrl:'https://factory.example',sharedSecret:'secret',fetchImpl:async()=>new Response(JSON.stringify({status:'READY',storage:{status:'READY'},sourceSha:'abc'}),{status:200})});
+ const adapter=createFactoryRailAdapter({baseUrl:'https://factory.example',sharedSecret:'secret',fetchImpl:async()=>new Response(JSON.stringify({status:'READY',storage:{status:'READY'},transport:{status:'READY'},sourceSha:'abc'}),{status:200})});
  const s=await adapter.probe({station,rail}); assert.equal(s.status,'READY'); assert.equal(s.capabilities.FACTORY_HANDOFF.status,'READY');
 });
 test('Factory adapter dispatches handoff and verifies readback', async()=>{
