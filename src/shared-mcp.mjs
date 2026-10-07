@@ -132,6 +132,23 @@ function toolResult(data, isError = false, meta = null) {
   return { content: [{ type: 'text', text: JSON.stringify(data) }], structuredContent: data, isError, ...(meta ? { _meta: meta } : {}) };
 }
 const PROFILE_IDS = Object.freeze({ GO: 'prf_7b65c803a1184c26', LIGHT: 'prf_d25e4e4fa31a42bc' });
+const SERVER_DERIVED_POLICY = 'REQUESTER_OWNS_WORK_ACCESS_V1';
+const SERVER_DERIVED_ACTIONS = Object.freeze(['read', 'handoff', 'return']);
+function explicitWorkGrants(grants, actor, workId) {
+  return grants.filter(grant => grant.actor === actor && grant.workId === workId);
+}
+function derivedWorkActions(record, actor, explicit = []) {
+  if (explicit.length > 0) return [];
+  if (actor !== 'GO' || record?.requestedBy !== actor) return [];
+  if (record?.state === 'CANCELLED') return ['read'];
+  return [...SERVER_DERIVED_ACTIONS];
+}
+function derivedDestinationAllowed(record, actor, explicit, payload = {}) {
+  if (explicit.length > 0) {
+    return explicit.some(grant => grant.action === 'handoff' && grant.stationId === payload.stationId && grant.operation === payload.operation);
+  }
+  return actor === 'GO' && record?.requestedBy === actor && record?.state !== 'CANCELLED' && payload.stationId === 'FACTORY_STATION';
+}
 function authChallenge(url) {
   return `Bearer resource_metadata="${url.origin}/.well-known/oauth-protected-resource/mcp", error="insufficient_scope", error_description="Link a GO or LIGHT Metropolis account to continue"`;
 }
@@ -140,13 +157,19 @@ export function createMetropolisMcp({ runtime, authenticate, grants = [], source
   if (!runtime || typeof authenticate !== 'function') throw new Error('RUNTIME_AUTHENTICATOR_REQUIRED');
   async function manifest(actor) {
     const authorizedActions = grants.filter(g => g.actor === actor);
-    const schemaHash = await hash(JSON.stringify({ tools, actionSchemas, receptionActionSchemas, version, sourceSha, actor, grants: authorizedActions }));
+    const schemaHash = await hash(JSON.stringify({ tools, actionSchemas, receptionActionSchemas, version, sourceSha, actor, grants: authorizedActions, serverDerivedPolicy: SERVER_DERIVED_POLICY }));
     const observedAt = new Date().toISOString();
-    const workIds = [...new Set(authorizedActions.map(grant => grant.workId))];
+    const listed = typeof runtime.listWorks === 'function' ? await runtime.listWorks() : [];
+    const derivedIds = listed
+      .filter(record => record?.workId && derivedWorkActions(record, actor, explicitWorkGrants(grants, actor, record.workId)).length > 0)
+      .map(record => record.workId);
+    const workIds = [...new Set([...authorizedActions.map(grant => grant.workId), ...derivedIds])];
     const works = await Promise.all(workIds.map(async workId => {
       try {
         const record = await runtime.getWork(workId);
-        if (!record) return { workId, present: false, state: 'UNKNOWN', checkpointId: null, ownerSystem: null, updatedAt: null, authorizedActions: authorizedActions.filter(grant => grant.workId === workId).map(grant => grant.action) };
+        const explicit = explicitWorkGrants(grants, actor, workId);
+        const actions = record ? (explicit.length > 0 ? explicit.map(grant => grant.action) : derivedWorkActions(record, actor, explicit)) : explicit.map(grant => grant.action);
+        if (!record) return { workId, present: false, state: 'UNKNOWN', checkpointId: null, ownerSystem: null, updatedAt: null, authorizedActions: actions };
         return {
           workId,
           present: true,
@@ -154,7 +177,8 @@ export function createMetropolisMcp({ runtime, authenticate, grants = [], source
           checkpointId: record.checkpointId || null,
           ownerSystem: record.ownerSystem || null,
           updatedAt: record.updatedAt || null,
-          authorizedActions: authorizedActions.filter(grant => grant.workId === workId).map(grant => grant.action),
+          authorizedActions: [...new Set(actions)],
+          accessSource: explicit.length > 0 ? 'EXPLICIT_POLICY' : 'SERVER_DERIVED_REQUESTER',
           tablet: record.tablet || null,
         };
       } catch {
@@ -172,7 +196,7 @@ export function createMetropolisMcp({ runtime, authenticate, grants = [], source
       tools,
       actionSchemas,
       receptionActionSchemas,
-      policy: { workAccessRules: authorizedActions },
+      policy: { mode: SERVER_DERIVED_POLICY, workAccessRules: authorizedActions },
       current: {
         release: { version, sourceSha },
         schema: { schemaHash, refreshedAt: observedAt, mode: 'FRESH_ON_ARRIVAL' },
@@ -236,8 +260,6 @@ export function createMetropolisMcp({ runtime, authenticate, grants = [], source
       const action = required(args.action, 'action');
       const workId = required(args.workId, 'workId');
       const payload = args.payload || {};
-      const matchingGrants = grants.filter(g => g.actor === actor && g.action === action && g.workId === workId);
-      if (matchingGrants.length === 0) return toolResult({ reason: 'NO_GRANT' }, true);
       if (Object.keys(args).some(k => !['action', 'workId', 'payload'].includes(k))) throw new Error('INVALID_ARGUMENT');
       if (typeof payload !== 'object' || Array.isArray(payload)) throw new Error('INVALID_PAYLOAD');
       if (payload.inputRefs && (!Array.isArray(payload.inputRefs) || payload.inputRefs.some(v => typeof v !== 'string'))) throw new Error('INVALID_PAYLOAD');
@@ -246,11 +268,15 @@ export function createMetropolisMcp({ runtime, authenticate, grants = [], source
       if (payload.confirmation != null && payload.confirmation !== 'CONFIRM_RETURN') throw new Error('INVALID_PAYLOAD');
       const before = await runtime.getWork(workId);
       if (!before) throw new Error('WORK_NOT_FOUND');
+      const explicit = explicitWorkGrants(grants, actor, workId);
+      const allowedActions = explicit.length > 0
+        ? explicit.map(grant => grant.action)
+        : derivedWorkActions(before, actor, explicit);
+      if (!allowedActions.includes(action)) return toolResult({ reason: 'NO_GRANT' }, true);
       let record;
       if (action === 'read') record = before;
       else if (action === 'handoff') {
-        const grant = matchingGrants.find(g => g.stationId === payload.stationId && g.operation === payload.operation);
-        if (!grant) throw new Error('DESTINATION_NOT_GRANTED');
+        if (!derivedDestinationAllowed(before, actor, explicit, payload)) throw new Error('DESTINATION_NOT_GRANTED');
         record = await runtime.handoff({ workId, checkpointId: before.checkpointId, actor, stationId: payload.stationId, operation: payload.operation, payload: payload.payload || {} });
       } else if (action === 'return') {
         // Agent-supplied flags cannot declare verified owner reality.
