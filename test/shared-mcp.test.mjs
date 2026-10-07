@@ -67,7 +67,7 @@ test('tool descriptors expose strict action-discriminated input schemas', async 
   assert.equal(reception.inputSchema.type, 'object');
   assert.equal(reception.inputSchema.oneOf.length, 8);
   assert.equal(work.inputSchema.type, 'object');
-  assert.equal(work.inputSchema.oneOf.length, 3);
+  assert.equal(work.inputSchema.oneOf.length, 5);
 
   const review = reception.inputSchema.oneOf.find(schema => schema.properties.action.const === 'review');
   assert.deepEqual(review.required, ['action', 'draftId']);
@@ -243,7 +243,7 @@ test('HERMES-created GO Work gets persisted Work Pass access without manual gran
   assert.ok(pointer);
   assert.equal(pointer.accessSource, 'PERSISTED_WORK_PASS');
   assert.equal(pointer.workPassRef, created.structuredContent.result.work.workPassRef);
-  assert.deepEqual(pointer.authorizedActions, ['read', 'handoff', 'return']);
+  assert.deepEqual(pointer.authorizedActions, ['read', 'handoff', 'return', 'cancel', 'complete']);
 
   const read = (await (await rpc(server, 'tools/call', {
     name: 'metropolis_work',

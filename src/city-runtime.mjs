@@ -169,7 +169,7 @@ export function createCityRuntime({ store = createMemoryStore(), clock = () => n
     if(!record) throw new Error('WORK_NOT_FOUND');
     if(record.checkpointId!==text(checkpointId,'checkpointId')) throw new Error('CHECKPOINT_MISMATCH');
     let review=record.stationReturnReview;
-    if(!review||review.status!=='GO_REVIEW_REQUIRED'){
+    if(!review||review.status!=='GO_REVIEW_REQUIRED'||(stationReviewed!==true&&review.verified!==true)){
       const stationRuntime=stations[record.handoff?.stationId]; let trustedReadback=clone(readback); let trustedVerified=false;
       const trustedEvidence=[...new Set((Array.isArray(evidenceRefs)?evidenceRefs:[]).filter(Boolean))];
       if(stationRuntime?.readback&&record.handoff?.external){
@@ -177,7 +177,12 @@ export function createCityRuntime({ store = createMemoryStore(), clock = () => n
         trustedVerified=trustedReadback?.verified===true&&trustedReadback?.domainVerified===true;
         if(trustedReadback?.evidenceRef&&!trustedEvidence.includes(trustedReadback.evidenceRef)) trustedEvidence.push(trustedReadback.evidenceRef);
       }
-      const now=clock(); const openIndex=[...(record.journeys||[])].map(j=>j?.status).lastIndexOf('IN_TRANSIT'); const openJourney=openIndex>=0?record.journeys[openIndex]:null;
+      const now=clock();
+      const journeyList=[...(record.journeys||[])];
+      const openIndex=journeyList.map(j=>j?.status).lastIndexOf('IN_TRANSIT');
+      const reviewIndex=review?.journeyId ? journeyList.findIndex(j=>j?.journeyId===review.journeyId) : -1;
+      const journeyIndex=openIndex>=0?openIndex:reviewIndex;
+      const openJourney=journeyIndex>=0?journeyList[journeyIndex]:null;
       const artifactRefs=Array.isArray(trustedReadback?.result?.artifactRefs)?trustedReadback.result.artifactRefs:[]; const receiptRefs=record.handoff?.external?.receiptId?[record.handoff.external.receiptId]:[];
       const baggageOut=normalizeJourneyBaggage({artifactRefs,evidenceRefs:trustedEvidence,receiptRefs});
       const diagnostic=createPixieStationDiagnostic({diagnosticId:`${id}:PIXIE:DIAGNOSTIC:${(record.reports||[]).length+1}`,workId:id,checkpointId:record.checkpointId,journeyId:openJourney?.journeyId||record.handoff?.journeyId||null,stationId:record.handoff?.stationId||null,before:openJourney?.baggageIn||{},after:baggageOut,unreadableRefs:trustedVerified?[]:['OWNER_EXECUTION_NOT_VERIFIED'],observedAt:now});
@@ -185,7 +190,8 @@ export function createCityRuntime({ store = createMemoryStore(), clock = () => n
       const report=createPixieReport({reportId,workId:id,checkpointId:record.checkpointId,ownerSystem:record.ownerSystem,sourceTool:record.handoff?.stationId||'RETURN_DESK',status:trustedVerified?'VERIFIED':'UNKNOWN',result:trustedReadback,artifactRefs,evidenceRefs:trustedEvidence,receiptRefs,unknowns:trustedVerified?[]:['OWNER_EXECUTION_NOT_VERIFIED'],observedAt:now});
       const reports=[...(record.reports||[]),report];
       const dataLifecycle=rotatePixieData(record.dataLifecycle||[],{dataId:`${id}:DATA:PIXIE:${reports.length}`,workId:id,checkpointId:record.checkpointId,producer:'PIXIE',kind:'TOOL_REPORT',payloadRef:`pixie-report://${reportId}`,evidenceRefs:report.evidenceRefs,ownerSystem:record.ownerSystem,truthOwner:record.ownerSystem,createdAt:now});
-      const journeys=[...(record.journeys||[])]; if(openJourney) journeys[openIndex]=closeStationJourney(openJourney,{baggage:baggageOut,diagnostic,outAt:now});
+      const journeys=[...(record.journeys||[])];
+      if(openJourney) journeys[journeyIndex]=closeStationJourney(openJourney,{baggage:baggageOut,diagnostic,outAt:openJourney.outAt||now});
       review={kind:'STATION_RETURN_REVIEW',status:'GO_REVIEW_REQUIRED',stationId:record.handoff?.stationId||null,journeyId:openJourney?.journeyId||record.handoff?.journeyId||null,match:true,outAt:now,counts:clone(diagnostic.counts),diagnostic:clone(diagnostic),readback:clone(trustedReadback),evidenceRefs:[...trustedEvidence],verified:trustedVerified,prompt:'CHECK_RETURNED_ITEMS; ADD_UPDATES_IF_ANY; OTHERWISE_PASS'};
       record={...record,state:WORK_STATE.RETURN_REVIEW,stationReturnReview:review,journeys,reports,dataLifecycle,history:[...(record.history||[]),{state:WORK_STATE.RETURN_REVIEW,journeyId:review.journeyId,at:now}],updatedAt:now};
       await store.put(`work:${id}`,record);

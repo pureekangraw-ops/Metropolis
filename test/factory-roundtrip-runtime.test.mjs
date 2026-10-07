@@ -84,24 +84,31 @@ test('Factory round trip preserves Work/Checkpoint and stays UNKNOWN until DWARF
   const premature = await city.returnWork({
     workId: 'WORK-1',
     checkpointId: 'CP-1',
-    actor: 'MIMIR',
+    actor: 'GO',
     readback: { claimed: true },
     evidenceRefs: [],
-    confirmation: 'CONFIRM_RETURN',
-    verified: false,
   });
-  assert.equal(premature.state, WORK_STATE.UNKNOWN);
-  assert.equal(premature.return.verified, false);
+  assert.equal(premature.state, WORK_STATE.RETURN_REVIEW);
+  assert.equal(premature.stationReturnReview.status, 'GO_REVIEW_REQUIRED');
+  assert.equal(premature.stationReturnReview.verified, false);
+  const firstOutAt = premature.journeys[0].outAt;
 
   domainVerified = true;
+  const refreshed = await city.returnWork({
+    workId: 'WORK-1',
+    checkpointId: 'CP-1',
+    actor: 'GO',
+  });
+  assert.equal(refreshed.state, WORK_STATE.RETURN_REVIEW);
+  assert.equal(refreshed.stationReturnReview.verified, true);
+  assert.equal(refreshed.journeys[0].outAt, firstOutAt);
+
   const returned = await city.returnWork({
     workId: 'WORK-1',
     checkpointId: 'CP-1',
-    actor: 'MIMIR',
-    readback: { claimed: false },
-    evidenceRefs: [],
-    confirmation: 'CONFIRM_RETURN',
-    verified: false,
+    actor: 'GO',
+    stationReviewed: true,
+    updates: [],
   });
   assert.equal(returned.state, WORK_STATE.RETURNED);
   assert.equal(returned.return.verified, true);

@@ -59,7 +59,7 @@ test('Work created by HERMES survives a fresh gateway on the same durable storag
   const arrived = await call(next, 'metropolis_arrive', {});
   const pointer = arrived.body.result.structuredContent.current.works.find(work => work.workId === workId);
   assert.equal(pointer.accessSource, 'PERSISTED_WORK_PASS');
-  assert.deepEqual(pointer.authorizedActions, ['read', 'handoff', 'return']);
+  assert.deepEqual(pointer.authorizedActions, ['read', 'handoff', 'return', 'cancel', 'complete']);
 
   const read = await call(next, 'metropolis_work', { action: 'read', workId });
   assert.equal(read.body.result.isError, false);
