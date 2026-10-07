@@ -121,8 +121,27 @@ function validCimdClientId(value) {
   }
 }
 
+const CHATGPT_CIMD_CLIENT_ID = 'https://chatgpt.com/oauth/client.json';
+const CHATGPT_CIMD_REDIRECT_URI = 'https://chatgpt.com/connector_platform_oauth_redirect';
+
+function knownCimdClient(config, clientId) {
+  if (clientId !== CHATGPT_CIMD_CLIENT_ID) return null;
+  return {
+    clientId,
+    clientSecret: '',
+    redirectUris: [CHATGPT_CIMD_REDIRECT_URI],
+    resources: [defaultResource(config)],
+    subject: null,
+    scope: null,
+    kind: 'CIMD',
+    tokenEndpointAuthMethod: 'none',
+  };
+}
+
 async function resolveCimdClient(config, clientId) {
   if (config.allowCimd !== true || !validCimdClientId(clientId)) return null;
+  const known = knownCimdClient(config, clientId);
+  if (known) return known;
   const fetchImpl = config.fetchImpl || fetch;
   let response;
   try {

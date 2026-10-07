@@ -74,3 +74,29 @@ test('authorize returns a safe invalid-client code without exposing request valu
   assert.deepEqual(body, { code: 'OAUTH_INVALID_CLIENT' });
   assert.equal(JSON.stringify(body).includes('unknown-client'), false);
 });
+
+test('known ChatGPT CIMD client works even when remote metadata fetch is unavailable', async () => {
+  const cfg = {
+    ...config(),
+    allowCimd: true,
+    fetchImpl: async () => { throw new Error('network unavailable'); },
+  };
+  const handler = createOAuthHandler(cfg);
+  const clientId = 'https://chatgpt.com/oauth/client.json';
+  const redirectUri = 'https://chatgpt.com/connector_platform_oauth_redirect';
+  const response = await handler(new Request(issuer + '/oauth/authorize?' + new URLSearchParams({
+    response_type: 'code',
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    code_challenge: challenge,
+    code_challenge_method: 'S256',
+    resource: cfg.resource,
+    scope: 'metropolis-go',
+    state: 'test',
+  })));
+  assert.equal(response.status, 200);
+  const html = await response.text();
+  assert.match(html, /Metropolis authorization/);
+  assert.match(html, /name="passcode"/);
+  assert.match(html, /value="https:\/\/chatgpt\.com\/oauth\/client\.json"/);
+});
