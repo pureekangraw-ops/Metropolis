@@ -521,7 +521,12 @@ export function createOAuthHandler(config = {}) {
           scope: code.scope,
         }, 200, { 'cache-control': 'no-store' });
       }
-    } catch {
+    } catch (error) {
+      console.warn('OAUTH_BAD_REQUEST', {
+        path: url.pathname,
+        method: request.method,
+        reason: String(error?.message || 'unknown'),
+      });
       return json({ code: 'OAUTH_BAD_REQUEST' }, 400);
     }
 
