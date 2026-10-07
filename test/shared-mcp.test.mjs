@@ -53,7 +53,9 @@ test('old room receives current schemas without creating another session', async
   const current = await arrive(service('release-two'));
   assert.notEqual(old.schemaHash, current.schemaHash);
   assert.equal(current.sourceSha, 'release-two');
-  assert.deepEqual(current.tools.map(t => t.name), ['metropolis_identity', 'metropolis_arrive', 'metropolis_work']);
+  assert.deepEqual(current.tools.map(t => t.name), ['metropolis_identity', 'metropolis_arrive', 'metropolis_reception', 'metropolis_work']);
+  assert.equal(current.reception.intakeDesk.anchor, 'WORK_FLOW');
+  assert.equal(current.reception.intakeDesk.securityVisibleAsNavigation, false);
   assert.equal(current.refresh.transportNotificationSupported, false);
 });
 test('arrival refreshes schema and shows only authorized current Work pointers without creating Work', async () => {
@@ -61,7 +63,7 @@ test('arrival refreshes schema and shows only authorized current Work pointers w
   await runtime.intake({ workId: 'W1', checkpointId: 'CP-LIVE', ownerSystem: 'FACTORY', requestedBy: 'GO', inputRefs: ['private://payload'] });
   const server = service('one', runtime, [
     { actor: 'GO', action: 'read', workId: 'W1' },
-    { actor: 'GO', action: 'intake', workId: 'W2', ownerSystem: 'FACTORY' },
+    { actor: 'GO', action: 'read', workId: 'W2' },
   ]);
   const manifest = await arrive(server);
   assert.equal(manifest.current.release.sourceSha, 'one');
@@ -80,7 +82,7 @@ test('arrival refreshes schema and shows only authorized current Work pointers w
   assert.equal(Object.hasOwn(live, 'inputRefs'), false);
 
   const pending = manifest.current.works.find(work => work.workId === 'W2');
-  assert.deepEqual(pending.authorizedActions, ['intake']);
+  assert.deepEqual(pending.authorizedActions, ['read']);
   assert.equal(pending.present, false);
   assert.equal(pending.state, 'UNKNOWN');
   assert.equal(await runtime.getWork('W2'), undefined);
@@ -89,28 +91,76 @@ test('arrival refreshes schema and shows only authorized current Work pointers w
   assert.deepEqual(light.current.works, []);
 });
 
-test('current server schema governs Work calls without a client schema echo', async () => {
-  const store = createMemoryStore();
-  const runtime = createCityRuntime({ store });
-  await arrive(service('old'));
-  const server = service('new', runtime, [{ actor: 'GO', action: 'intake', workId: 'W1', ownerSystem: 'FACTORY' }]);
-  const reply = await (await rpc(server, 'tools/call', { name: 'metropolis_work', arguments: { action: 'intake', workId: 'W1', payload: {} } })).json();
-  assert.equal(reply.result.isError, false);
-  assert.equal(reply.result.structuredContent.record.ownerSystem, 'FACTORY');
-  assert.equal(reply.result.structuredContent.record.checkpointId, 'W1:CP-01');
+test('HERMES creates Work ID only after INPUT → DRAFT → REVIEW → READY TO CREATE', async () => {
+  const runtime = createCityRuntime({ store: createMemoryStore() });
+  const server = service('new', runtime, []);
+
+  const input = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_reception',
+    arguments: {
+      action: 'input_information',
+      payload: {
+        information: { title: 'First real work', summary: 'Create after review' },
+        ownerSystem: 'FACTORY',
+      },
+    },
+  })).json()).result;
+  assert.equal(input.isError, false);
+  const draftId = input.structuredContent.result.draftId;
+  assert.match(draftId, /^DRAFT-/);
+  assert.equal(input.structuredContent.result.workId, null);
+
+  const review = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_reception',
+    arguments: { action: 'review', draftId, payload: {} },
+  })).json()).result;
+  assert.equal(review.structuredContent.result.state, 'REVIEW');
+  assert.equal(review.structuredContent.result.review.status, 'READY_FOR_DECISION');
+
+  const ready = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_reception',
+    arguments: { action: 'ready_to_create', draftId, payload: {} },
+  })).json()).result;
+  assert.equal(ready.structuredContent.result.state, 'READY_TO_CREATE');
+
+  const created = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_reception',
+    arguments: { action: 'create_work', draftId, payload: {} },
+  })).json()).result;
+  assert.equal(created.isError, false);
+  assert.match(created.structuredContent.result.workId, /^WORK-/);
+  assert.match(created.structuredContent.result.checkpointId, /:CP-01$/);
+  assert.equal(created.structuredContent.result.work.intakeDraftId, draftId);
+  assert.equal(created.structuredContent.result.go, true);
 });
-test('Work identity and server-owned checkpoint survive intake and readback', async () => {
-  const runtime = createCityRuntime();
-  const server = service('one', runtime, [{ actor: 'GO', action: 'intake', workId: 'W1', ownerSystem: 'FACTORY' }, grant]);
-  await arrive(server);
-  const intake = (await (await rpc(server, 'tools/call', { name: 'metropolis_work', arguments: { action: 'intake', workId: 'W1', payload: {} } })).json()).result;
-  assert.equal(intake.isError, false);
-  assert.equal(intake.structuredContent.record.checkpointId, 'W1:CP-01');
-  assert.equal(intake.structuredContent.record.ownerSystem, 'FACTORY');
-  assert.equal(intake.structuredContent.record.requestedBy, 'GO');
-  assert.equal(intake.structuredContent.readbackVerified, true);
-  const read = (await (await rpc(server, 'tools/call', { name: 'metropolis_work', arguments: { action: 'read', workId: 'W1' } })).json()).result;
-  assert.equal(read.structuredContent.record.workId, 'W1');
+
+test('READY TO RESUME searches then resumes the existing Work ID and checkpoint', async () => {
+  const runtime = createCityRuntime({ store: createMemoryStore() });
+  await runtime.intake({
+    workId: 'WORK-EXISTING',
+    checkpointId: 'WORK-EXISTING:CP-07',
+    ownerSystem: 'FACTORY',
+    requestedBy: 'GO',
+    intakeDraftId: 'DRAFT-OLD',
+    intakeInformation: { title: 'Existing Work', summary: 'Resume me' },
+  });
+  const server = service('one', runtime, []);
+
+  const search = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_reception',
+    arguments: { action: 'search_work', payload: { query: 'Existing Work' } },
+  })).json()).result;
+  assert.equal(search.isError, false);
+  assert.equal(search.structuredContent.result.matches[0].workId, 'WORK-EXISTING');
+
+  const resume = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_reception',
+    arguments: { action: 'resume_work', payload: { workId: 'WORK-EXISTING' } },
+  })).json()).result;
+  assert.equal(resume.isError, false);
+  assert.equal(resume.structuredContent.result.workId, 'WORK-EXISTING');
+  assert.equal(resume.structuredContent.result.checkpointId, 'WORK-EXISTING:CP-07');
+  assert.equal(resume.structuredContent.result.workTruthChanged, false);
 });
 test('LIGHT cannot reuse GO grant or self-declare GO identity', async () => {
   const runtime = createCityRuntime();
