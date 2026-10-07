@@ -53,9 +53,14 @@ test('Work created by HERMES survives a fresh gateway on the same durable storag
 
   const nextEnv = {
     ...env,
-    MCP_WORK_GRANTS: JSON.stringify([{ actor: 'GO', action: 'read', workId }]),
+    MCP_WORK_GRANTS: '[]',
   };
   const next = createGateway({ env: nextEnv, storage: durable, sourceSha: 'a'.repeat(40) });
+  const arrived = await call(next, 'metropolis_arrive', {});
+  const pointer = arrived.body.result.structuredContent.current.works.find(work => work.workId === workId);
+  assert.equal(pointer.accessSource, 'PERSISTED_WORK_PASS');
+  assert.deepEqual(pointer.authorizedActions, ['read', 'handoff', 'return']);
+
   const read = await call(next, 'metropolis_work', { action: 'read', workId });
   assert.equal(read.body.result.isError, false);
   assert.equal(read.body.result.structuredContent.record.checkpointId, checkpointId);
