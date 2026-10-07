@@ -1,4 +1,7 @@
 import { createCargoEnvelope, deliverCargo, createMailbox, MAILBOX_STATUS } from './post-office.mjs';
+import { prepareMimirReturn } from './agents/mimir/return-desk.mjs';
+import { rotateHallData } from './secretary/product-life-cycle.mjs';
+import { createPixieReport } from './pixie/report-router.mjs';
 
 export const CITY_COMPONENTS = Object.freeze(['METROPOLIS', 'CITY_HALL', 'WORK_SYSTEM', 'POST_OFFICE', 'PIXIE_SERVICE', 'SHOP', 'SPECTRUMSALE', 'THE_TAILOR']);
 export const WORK_STATE = Object.freeze({ RECEIVED: 'RECEIVED', HANDED_OFF: 'HANDED_OFF', RETURNED: 'RETURNED', UNKNOWN: 'UNKNOWN' });
@@ -48,7 +51,35 @@ export function createCityRuntime({ store = createMemoryStore(), clock = () => n
     const existing = await store.get(`work:${id}`);
     if (existing) throw new Error('WORK_ALREADY_EXISTS');
     const now = clock();
-    const record = { kind: 'WORK_RECORD', workId: id, ownerSystem: owner, requestedBy: text(requestedBy, 'requestedBy'), state: WORK_STATE.RECEIVED, checkpointId: checkpointId == null ? `${id}:CP-01` : text(checkpointId, 'checkpointId'), inputRefs: [...inputRefs], handoff: null, return: null, history: [{ state: WORK_STATE.RECEIVED, at: now }], sourceSha, updatedAt: now };
+    const cp = checkpointId == null ? `${id}:CP-01` : text(checkpointId, 'checkpointId');
+    const dataLifecycle = rotateHallData([], {
+      dataId: `${id}:DATA:COUNTER:1`,
+      workId: id,
+      checkpointId: cp,
+      producer: 'COUNTER',
+      kind: 'INTAKE',
+      payloadRef: inputRefs[0] || null,
+      ownerSystem: owner,
+      truthOwner: owner,
+      createdAt: now,
+    });
+    const record = {
+      kind: 'WORK_RECORD',
+      workId: id,
+      ownerSystem: owner,
+      requestedBy: text(requestedBy, 'requestedBy'),
+      state: WORK_STATE.RECEIVED,
+      checkpointId: cp,
+      inputRefs: [...inputRefs],
+      handoff: null,
+      returnReview: null,
+      return: null,
+      reports: [],
+      dataLifecycle,
+      history: [{ state: WORK_STATE.RECEIVED, at: now }],
+      sourceSha,
+      updatedAt: now,
+    };
     await store.put(`work:${id}`, record);
     return clone(record);
   }
@@ -66,16 +97,85 @@ export function createCityRuntime({ store = createMemoryStore(), clock = () => n
       : null;
     const now = clock();
     const handoff = { handoffId: idFactory(), actor: text(actor, 'actor'), stationId: station, operation: op, payload: clone(payload), external: clone(external), createdAt: now };
-    const next = { ...record, state: WORK_STATE.HANDED_OFF, handoff, history: [...record.history, { state: WORK_STATE.HANDED_OFF, at: now }].slice(station === 'OBSERVATORY_STATION' ? -100 : 0), updatedAt: now };
+    let reports = [...(record.reports || [])];
+    let dataLifecycle = [...(record.dataLifecycle || [])];
+    if (external) {
+      const reportId = `${id}:PIXIE:HANDOFF:${reports.length + 1}`;
+      const report = createPixieReport({
+        reportId,
+        workId: id,
+        checkpointId: record.checkpointId,
+        ownerSystem: record.ownerSystem,
+        sourceTool: station,
+        status: external.verified === true ? 'VERIFIED' : 'UNKNOWN',
+        result: external,
+        evidenceRefs: external.evidenceRef ? [external.evidenceRef] : [],
+        receiptRefs: external.receiptId ? [external.receiptId] : [],
+        observedAt: now,
+      });
+      reports = [...reports, report];
+      dataLifecycle = rotateHallData(dataLifecycle, {
+        dataId: `${id}:DATA:PIXIE:${reports.length}`,
+        workId: id,
+        checkpointId: record.checkpointId,
+        producer: 'PIXIE',
+        kind: 'TOOL_REPORT',
+        payloadRef: `pixie-report://${reportId}`,
+        evidenceRefs: report.evidenceRefs,
+        ownerSystem: record.ownerSystem,
+        truthOwner: record.ownerSystem,
+        createdAt: now,
+      });
+    }
+    const next = {
+      ...record,
+      state: WORK_STATE.HANDED_OFF,
+      handoff,
+      reports,
+      dataLifecycle,
+      history: [...record.history, { state: WORK_STATE.HANDED_OFF, at: now }].slice(station === 'OBSERVATORY_STATION' ? -100 : 0),
+      updatedAt: now,
+    };
     await store.put(`work:${id}`, next);
     return clone(next);
   }
 
-  async function returnWork({ workId, checkpointId, readback, evidenceRefs = [], verified = false, actor = 'MIMIR' } = {}) {
+  async function returnWork({
+    workId,
+    checkpointId,
+    readback,
+    evidenceRefs = [],
+    updates = [],
+    confirmation = null,
+    verified = false,
+    actor = 'MIMIR',
+  } = {}) {
     const id = text(workId, 'workId');
     const record = await store.get(`work:${id}`);
     if (!record) throw new Error('WORK_NOT_FOUND');
     if (record.checkpointId !== text(checkpointId, 'checkpointId')) throw new Error('CHECKPOINT_MISMATCH');
+
+    const review = prepareMimirReturn({
+      workId: id,
+      checkpointId: record.checkpointId,
+      readback,
+      evidenceRefs,
+      updates,
+      confirmation,
+      observedAt: clock(),
+    });
+
+    if (review.status !== 'CONFIRMED') {
+      const now = clock();
+      const pending = {
+        ...record,
+        returnReview: clone(review),
+        updatedAt: now,
+      };
+      await store.put(`work:${id}`, pending);
+      return clone(pending);
+    }
+
     const stationRuntime = stations[record.handoff?.stationId];
     let trustedReadback = null;
     let trustedVerified = verified === true;
@@ -85,15 +185,73 @@ export function createCityRuntime({ store = createMemoryStore(), clock = () => n
       trustedVerified = trustedReadback?.verified === true && trustedReadback?.domainVerified === true;
       if (trustedReadback?.evidenceRef && !trustedEvidence.includes(trustedReadback.evidenceRef)) trustedEvidence.push(trustedReadback.evidenceRef);
     }
+
     const now = clock();
+    const organized = prepareMimirReturn({
+      workId: id,
+      checkpointId: record.checkpointId,
+      readback: trustedReadback || readback,
+      evidenceRefs: trustedEvidence,
+      updates,
+      confirmation,
+      observedAt: now,
+    });
+
+    const reports = [...(record.reports || [])];
+    const reportId = `${id}:PIXIE:RETURN:${reports.length + 1}`;
+    const report = createPixieReport({
+      reportId,
+      workId: id,
+      checkpointId: record.checkpointId,
+      ownerSystem: record.ownerSystem,
+      sourceTool: record.handoff?.stationId || 'RETURN_DESK',
+      status: trustedVerified ? 'VERIFIED' : 'UNKNOWN',
+      result: trustedReadback || readback,
+      artifactRefs: Array.isArray(trustedReadback?.result?.artifactRefs) ? trustedReadback.result.artifactRefs : [],
+      evidenceRefs: trustedEvidence,
+      receiptRefs: record.handoff?.external?.receiptId ? [record.handoff.external.receiptId] : [],
+      unknowns: trustedVerified ? [] : ['OWNER_EXECUTION_NOT_VERIFIED'],
+      observedAt: now,
+    });
+    const nextReports = [...reports, report];
+
+    let dataLifecycle = rotateHallData(record.dataLifecycle || [], {
+      dataId: `${id}:DATA:PIXIE:${nextReports.length}`,
+      workId: id,
+      checkpointId: record.checkpointId,
+      producer: 'PIXIE',
+      kind: 'TOOL_REPORT',
+      payloadRef: `pixie-report://${reportId}`,
+      evidenceRefs: report.evidenceRefs,
+      ownerSystem: record.ownerSystem,
+      truthOwner: record.ownerSystem,
+      createdAt: now,
+    });
+    dataLifecycle = rotateHallData(dataLifecycle, {
+      dataId: `${id}:DATA:MIMIR:${nextReports.length}`,
+      workId: id,
+      checkpointId: record.checkpointId,
+      producer: 'MIMIR',
+      kind: 'RETURN_PACKET',
+      payloadRef: `mimir-return://${id}/${record.checkpointId}`,
+      evidenceRefs: trustedEvidence,
+      ownerSystem: record.ownerSystem,
+      truthOwner: record.ownerSystem,
+      createdAt: now,
+    });
+
     const state = trustedVerified ? WORK_STATE.RETURNED : WORK_STATE.UNKNOWN;
     const next = {
       ...record,
       state,
+      returnReview: clone(organized),
+      reports: nextReports,
+      dataLifecycle,
       return: {
         actor: text(actor, 'actor'),
         readback: clone(trustedReadback || readback),
         evidenceRefs: trustedEvidence,
+        organized: clone(organized.organized),
         verified: trustedVerified,
         returnedAt: now,
       },

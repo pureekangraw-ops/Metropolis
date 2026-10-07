@@ -65,6 +65,8 @@ test('arrival refreshes schema and shows only authorized current Work pointers w
   ]);
   const manifest = await arrive(server);
   assert.equal(manifest.current.release.sourceSha, 'one');
+  assert.equal(manifest.reception.staff.id, 'HERMES');
+  assert.equal(manifest.reception.lostAndFound.candidates.some(item => item.workId === 'W1'), true);
   assert.equal(manifest.current.schema.schemaHash, manifest.schemaHash);
   assert.equal(manifest.current.schema.mode, 'FRESH_ON_ARRIVAL');
   assert.equal(manifest.refresh.currentSnapshotIncluded, true);
@@ -146,8 +148,14 @@ test('return records evidence without accepting an agent claim of verified execu
   await runtime.intake({ workId: 'W1', ownerSystem: 'FACTORY' });
   const server = service('one', runtime, [{ actor: 'GO', action: 'return', workId: 'W1' }]);
   await arrive(server);
-  const reply = (await (await rpc(server, 'tools/call', { name: 'metropolis_work', arguments: { action: 'return', workId: 'W1', payload: { verified: true, evidenceRefs: ['evidence://one'] } } })).json()).result;
+  const review = (await (await rpc(server, 'tools/call', { name: 'metropolis_work', arguments: { action: 'return', workId: 'W1', payload: { verified: true, evidenceRefs: ['evidence://one'] } } })).json()).result;
+  assert.equal(review.structuredContent.record.return, null);
+  assert.equal(review.structuredContent.record.returnReview.status, 'CONFIRMATION_REQUIRED');
+  assert.equal(review.structuredContent.ownerExecutionVerified, false);
+
+  const reply = (await (await rpc(server, 'tools/call', { name: 'metropolis_work', arguments: { action: 'return', workId: 'W1', payload: { evidenceRefs: ['evidence://one'], confirmation: 'CONFIRM_RETURN' } } })).json()).result;
   assert.equal(reply.structuredContent.record.return.verified, false);
+  assert.equal(reply.structuredContent.record.returnReview.status, 'CONFIRMED');
   assert.equal(reply.structuredContent.ownerExecutionVerified, false);
 });
 test('handoff cannot widen its destination or override its Work identity', async () => {

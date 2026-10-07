@@ -82,6 +82,7 @@ test('Factory round trip preserves Work/Checkpoint and stays UNKNOWN until DWARF
     actor: 'MIMIR',
     readback: { claimed: true },
     evidenceRefs: [],
+    confirmation: 'CONFIRM_RETURN',
     verified: false,
   });
   assert.equal(premature.state, WORK_STATE.UNKNOWN);
@@ -94,6 +95,7 @@ test('Factory round trip preserves Work/Checkpoint and stays UNKNOWN until DWARF
     actor: 'MIMIR',
     readback: { claimed: false },
     evidenceRefs: [],
+    confirmation: 'CONFIRM_RETURN',
     verified: false,
   });
   assert.equal(returned.state, WORK_STATE.RETURNED);

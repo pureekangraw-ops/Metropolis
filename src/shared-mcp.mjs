@@ -1,3 +1,4 @@
+import { createHermesReception } from './agents/hermes/station-reception.mjs';
 const ACTIONS = ['read', 'intake', 'handoff', 'return'];
 const PROTOCOLS = ['2025-03-26', '2025-06-18', '2025-11-25'];
 const string = { type: 'string', minLength: 1 };
@@ -45,7 +46,23 @@ const actionSchemas = {
   read: { type: 'object', properties: {}, additionalProperties: false },
   intake: { type: 'object', properties: { inputRefs: { type: 'array', items: string } }, additionalProperties: false },
   handoff: { type: 'object', properties: { stationId: string, operation: string, payload: { type: 'object' } }, required: ['stationId', 'operation'], additionalProperties: false },
-  return: { type: 'object', properties: { readback: { type: 'object' }, evidenceRefs: { type: 'array', items: string } }, additionalProperties: false },
+  return: {
+    type: 'object',
+    properties: {
+      readback: { type: 'object' },
+      evidenceRefs: { type: 'array', items: string },
+      updates: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: { kind: string, valueRef: string, note: string },
+          additionalProperties: false,
+        },
+      },
+      confirmation: { type: 'string', enum: ['CONFIRM_RETURN'] },
+    },
+    additionalProperties: false,
+  },
 };
 export function json(body, status = 200, extra = {}) {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...extra } });
@@ -105,6 +122,7 @@ export function createMetropolisMcp({ runtime, authenticate, grants = [], source
         schema: { schemaHash, refreshedAt: observedAt, mode: 'FRESH_ON_ARRIVAL' },
         works,
       },
+      reception: createHermesReception({ actor, works, observedAt }),
       refresh: { mode: 'READ_CURRENT_ON_EVERY_CALL', transportNotificationSupported: false, clientReconnectMayBeRequired: true, currentSnapshotIncluded: true },
       authorityCreated: false,
       workCreated: false,
@@ -128,6 +146,8 @@ export function createMetropolisMcp({ runtime, authenticate, grants = [], source
       if (typeof payload !== 'object' || Array.isArray(payload)) throw new Error('INVALID_PAYLOAD');
       if (payload.inputRefs && (!Array.isArray(payload.inputRefs) || payload.inputRefs.some(v => typeof v !== 'string'))) throw new Error('INVALID_PAYLOAD');
       if (payload.evidenceRefs && (!Array.isArray(payload.evidenceRefs) || payload.evidenceRefs.some(v => typeof v !== 'string'))) throw new Error('INVALID_PAYLOAD');
+      if (payload.updates && (!Array.isArray(payload.updates) || payload.updates.some(v => !v || typeof v !== 'object' || Array.isArray(v)))) throw new Error('INVALID_PAYLOAD');
+      if (payload.confirmation != null && payload.confirmation !== 'CONFIRM_RETURN') throw new Error('INVALID_PAYLOAD');
       const before = await runtime.getWork(workId);
       if (action !== 'intake' && !before) throw new Error('WORK_NOT_FOUND');
       let record, stationResult;
@@ -147,7 +167,16 @@ export function createMetropolisMcp({ runtime, authenticate, grants = [], source
         } else record = await runtime.handoff({ workId, checkpointId: before.checkpointId, actor, stationId: payload.stationId, operation: payload.operation, payload: payload.payload || {} });
       } else if (action === 'return') {
         // Agent-supplied flags cannot declare verified owner reality.
-        record = await runtime.returnWork({ workId, checkpointId: before.checkpointId, actor, readback: payload.readback, evidenceRefs: payload.evidenceRefs || [], verified: false });
+        record = await runtime.returnWork({
+          workId,
+          checkpointId: before.checkpointId,
+          actor,
+          readback: payload.readback,
+          evidenceRefs: payload.evidenceRefs || [],
+          updates: payload.updates || [],
+          confirmation: payload.confirmation || null,
+          verified: false,
+        });
       } else throw new Error('ACTION_NOT_FOUND');
       const readback = await runtime.getWork(workId);
       if (JSON.stringify(record) !== JSON.stringify(readback)) throw new Error('WRITE_READBACK_MISMATCH');
