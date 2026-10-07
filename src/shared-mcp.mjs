@@ -16,51 +16,6 @@ const profileOutputSchema = Object.freeze({
   required: ['id'],
   additionalProperties: false,
 });
-const tools = [
-  {
-    name: 'metropolis_identity',
-    title: 'Metropolis identity',
-    description: 'Return the GO or LIGHT profile represented by the authenticated connection. Use this to distinguish multiple connected Metropolis accounts.',
-    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-    outputSchema: profileOutputSchema,
-    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
-    securitySchemes: oauthSecurity,
-    _meta: { 'openai/profile': true },
-  },
-  {
-    name: 'metropolis_arrive',
-    title: 'Enter Metropolis',
-    description: 'GO/LIGHT arrival station. Refresh the current release/schema and return authorized Work/Checkpoint pointers on every arrival or refresh. No Work or authority is created.',
-    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
-    securitySchemes: oauthSecurity,
-  },
-  {
-    name: 'metropolis_reception',
-    title: 'Use HERMES Reception',
-    description: 'Capture intake information as a Draft Tablet, review it, then CREATE a new Work ID or SEARCH and RESUME an existing Work. CANCEL selects its target after the command. Work IDs are never caller-created.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        action: { type: 'string', enum: RECEPTION_ACTIONS },
-        draftId: string,
-        payload: { type: 'object' },
-      },
-      required: ['action'],
-      additionalProperties: false,
-    },
-    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
-    securitySchemes: oauthSecurity,
-  },
-  {
-    name: 'metropolis_work',
-    title: 'Use Existing Metropolis Work',
-    description: 'Operate on an existing City Hall Work. CREATE and RESUME belong to HERMES Reception; this tool never creates a caller-supplied Work ID.',
-    inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ACTIONS }, workId: string, payload: { type: 'object' } }, required: ['action', 'workId'], additionalProperties: false },
-    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
-    securitySchemes: oauthSecurity,
-  },
-];
 const actionSchemas = {
   read: { type: 'object', properties: {}, additionalProperties: false },
   handoff: { type: 'object', properties: { stationId: string, operation: string, payload: { type: 'object' } }, required: ['stationId', 'operation'], additionalProperties: false },
@@ -119,6 +74,77 @@ const receptionActionSchemas = {
     additionalProperties: false,
   },
 };
+
+function actionInputVariant(action, payloadSchema, {
+  includeWorkId = false,
+  includeDraftId = false,
+  requireDraftId = false,
+  requirePayload = false,
+} = {}) {
+  const properties = {
+    action: { type: 'string', const: action },
+    ...(includeWorkId ? { workId: string } : {}),
+    ...(includeDraftId ? { draftId: string } : {}),
+    payload: payloadSchema,
+  };
+  const required = ['action', ...(includeWorkId ? ['workId'] : []), ...(requireDraftId ? ['draftId'] : []), ...(requirePayload ? ['payload'] : [])];
+  return { type: 'object', properties, required, additionalProperties: false };
+}
+
+const workInputSchema = Object.freeze({
+  type: 'object',
+  oneOf: ACTIONS.map(action => actionInputVariant(action, actionSchemas[action], {
+    includeWorkId: true,
+    requirePayload: action === 'handoff',
+  })),
+});
+
+const receptionInputSchema = Object.freeze({
+  type: 'object',
+  oneOf: RECEPTION_ACTIONS.map(action => actionInputVariant(action, receptionActionSchemas[action], {
+    includeDraftId: action !== 'cancel',
+    requireDraftId: !['input_information', 'cancel'].includes(action),
+    requirePayload: ['search_work', 'resume_work', 'cancel'].includes(action),
+  })),
+});
+
+const tools = [
+  {
+    name: 'metropolis_identity',
+    title: 'Metropolis identity',
+    description: 'Return the GO or LIGHT profile represented by the authenticated connection. Use this to distinguish multiple connected Metropolis accounts.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    outputSchema: profileOutputSchema,
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    securitySchemes: oauthSecurity,
+    _meta: { 'openai/profile': true },
+  },
+  {
+    name: 'metropolis_arrive',
+    title: 'Enter Metropolis',
+    description: 'GO/LIGHT arrival station. Refresh the current release/schema and return authorized Work/Checkpoint pointers on every arrival or refresh. No Work or authority is created.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    securitySchemes: oauthSecurity,
+  },
+  {
+    name: 'metropolis_reception',
+    title: 'Use HERMES Reception',
+    description: 'Capture intake information as a Draft Tablet, review it, then CREATE a new Work ID or SEARCH and RESUME an existing Work. CANCEL selects its target after the command. Work IDs are never caller-created.',
+    inputSchema: receptionInputSchema,
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    securitySchemes: oauthSecurity,
+  },
+  {
+    name: 'metropolis_work',
+    title: 'Use Existing Metropolis Work',
+    description: 'Operate on an existing City Hall Work. CREATE and RESUME belong to HERMES Reception; this tool never creates a caller-supplied Work ID.',
+    inputSchema: workInputSchema,
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    securitySchemes: oauthSecurity,
+  },
+];
+
 export function json(body, status = 200, extra = {}) {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...extra } });
 }
@@ -128,6 +154,33 @@ export async function hash(value) {
 function required(value, name) {
   if (typeof value !== 'string' || !value.trim()) throw new Error(name + '_REQUIRED');
   return value.trim();
+}
+function schemaMatches(value, schema) {
+  if (!schema || typeof schema !== 'object') return true;
+  if (Array.isArray(schema.oneOf)) {
+    return schema.oneOf.filter(candidate => schemaMatches(value, candidate)).length === 1;
+  }
+  if (Object.hasOwn(schema, 'const') && value !== schema.const) return false;
+  if (Array.isArray(schema.enum) && !schema.enum.includes(value)) return false;
+  if (schema.type === 'string') {
+    return typeof value === 'string' && (schema.minLength == null || value.length >= schema.minLength);
+  }
+  if (schema.type === 'integer') {
+    return Number.isInteger(value)
+      && (schema.minimum == null || value >= schema.minimum)
+      && (schema.maximum == null || value <= schema.maximum);
+  }
+  if (schema.type === 'array') {
+    return Array.isArray(value) && value.every(item => schemaMatches(item, schema.items));
+  }
+  if (schema.type === 'object') {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    const properties = schema.properties || {};
+    if ((schema.required || []).some(key => !Object.hasOwn(value, key))) return false;
+    if (schema.additionalProperties === false && Object.keys(value).some(key => !Object.hasOwn(properties, key))) return false;
+    return Object.entries(properties).every(([key, child]) => !Object.hasOwn(value, key) || schemaMatches(value[key], child));
+  }
+  return true;
 }
 function toolResult(data, isError = false, meta = null) {
   return { content: [{ type: 'text', text: JSON.stringify(data) }], structuredContent: data, isError, ...(meta ? { _meta: meta } : {}) };
@@ -229,9 +282,8 @@ export function createMetropolisMcp({ runtime, authenticate, grants = [], source
         if (actor !== 'GO') return toolResult({ reason: 'NO_RECEPTION_AUTHORITY' }, true);
         const action = required(args.action, 'action');
         if (!RECEPTION_ACTIONS.includes(action)) throw new Error('ACTION_NOT_FOUND');
-        if (Object.keys(args).some(key => !['action', 'draftId', 'payload'].includes(key))) throw new Error('INVALID_ARGUMENT');
+        if (!schemaMatches(args, receptionInputSchema)) throw new Error('INVALID_ARGUMENT');
         const payload = args.payload || {};
-        if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('INVALID_PAYLOAD');
 
         let result;
         if (action === 'input_information') {
@@ -268,13 +320,9 @@ export function createMetropolisMcp({ runtime, authenticate, grants = [], source
     try {
       const action = required(args.action, 'action');
       const workId = required(args.workId, 'workId');
+      if (!ACTIONS.includes(action)) throw new Error('ACTION_NOT_FOUND');
+      if (!schemaMatches(args, workInputSchema)) throw new Error('INVALID_ARGUMENT');
       const payload = args.payload || {};
-      if (Object.keys(args).some(k => !['action', 'workId', 'payload'].includes(k))) throw new Error('INVALID_ARGUMENT');
-      if (typeof payload !== 'object' || Array.isArray(payload)) throw new Error('INVALID_PAYLOAD');
-      if (payload.inputRefs && (!Array.isArray(payload.inputRefs) || payload.inputRefs.some(v => typeof v !== 'string'))) throw new Error('INVALID_PAYLOAD');
-      if (payload.evidenceRefs && (!Array.isArray(payload.evidenceRefs) || payload.evidenceRefs.some(v => typeof v !== 'string'))) throw new Error('INVALID_PAYLOAD');
-      if (payload.updates && (!Array.isArray(payload.updates) || payload.updates.some(v => !v || typeof v !== 'object' || Array.isArray(v)))) throw new Error('INVALID_PAYLOAD');
-      if (payload.confirmation != null && payload.confirmation !== 'CONFIRM_RETURN') throw new Error('INVALID_PAYLOAD');
       const before = await runtime.getWork(workId);
       if (!before) throw new Error('WORK_NOT_FOUND');
       const explicit = explicitWorkGrants(grants, actor, workId);
