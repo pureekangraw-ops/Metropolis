@@ -65,10 +65,10 @@ function authChallenge(url) {
   return `Bearer resource_metadata="${url.origin}/.well-known/oauth-protected-resource/mcp", error="insufficient_scope", error_description="Link a GO or LIGHT Metropolis account to continue"`;
 }
 
-export function createMetropolisMcp({ runtime, authenticate, grants = [], sourceSha = 'UNKNOWN', version = '1.0.0', allowedOrigins = [] } = {}) {
+export function createMetropolisMcp({ runtime, authenticate, grants = [], sourceSha = 'UNKNOWN', version = '1.0.0', allowedOrigins = [], grantsProvider = async () => [], stationHandler } = {}) {
   if (!runtime || typeof authenticate !== 'function') throw new Error('RUNTIME_AUTHENTICATOR_REQUIRED');
   async function manifest(actor) {
-    const authorizedActions = grants.filter(g => g.actor === actor);
+    const authorizedActions = [...grants, ...await grantsProvider(actor)].filter(g => g.actor === actor);
     const schemaHash = await hash(JSON.stringify({ tools, actionSchemas, version, sourceSha, actor, grants: authorizedActions }));
     const observedAt = new Date().toISOString();
     const workIds = [...new Set(authorizedActions.map(grant => grant.workId))];
@@ -122,7 +122,7 @@ export function createMetropolisMcp({ runtime, authenticate, grants = [], source
       const action = required(args.action, 'action');
       const workId = required(args.workId, 'workId');
       const payload = args.payload || {};
-      const matchingGrants = grants.filter(g => g.actor === actor && g.action === action && g.workId === workId);
+      const matchingGrants = current.authorizedActions.filter(g => g.actor === actor && g.action === action && g.workId === workId);
       if (matchingGrants.length === 0) return toolResult({ reason: 'NO_GRANT' }, true);
       if (Object.keys(args).some(k => !['action', 'workId', 'payload'].includes(k))) throw new Error('INVALID_ARGUMENT');
       if (typeof payload !== 'object' || Array.isArray(payload)) throw new Error('INVALID_PAYLOAD');
@@ -130,7 +130,7 @@ export function createMetropolisMcp({ runtime, authenticate, grants = [], source
       if (payload.evidenceRefs && (!Array.isArray(payload.evidenceRefs) || payload.evidenceRefs.some(v => typeof v !== 'string'))) throw new Error('INVALID_PAYLOAD');
       const before = await runtime.getWork(workId);
       if (action !== 'intake' && !before) throw new Error('WORK_NOT_FOUND');
-      let record;
+      let record, stationResult;
       if (action === 'read') record = before;
       else if (action === 'intake') {
         const grant = matchingGrants.find(g => typeof g.ownerSystem === 'string' && g.ownerSystem.trim() !== '');
@@ -139,14 +139,19 @@ export function createMetropolisMcp({ runtime, authenticate, grants = [], source
       } else if (action === 'handoff') {
         const grant = matchingGrants.find(g => g.stationId === payload.stationId && g.operation === payload.operation);
         if (!grant) throw new Error('DESTINATION_NOT_GRANTED');
-        record = await runtime.handoff({ workId, checkpointId: before.checkpointId, actor, stationId: payload.stationId, operation: payload.operation, payload: payload.payload || {} });
+        if (payload.stationId === 'OBSERVATORY_STATION') {
+          if (!stationHandler) throw new Error('STATION_UNAVAILABLE');
+          stationResult = await stationHandler({ actor, workId, checkpointId: before.checkpointId, operation: payload.operation, payload: payload.payload || {} });
+          // Durable station results contain observations; Work stores only bounded correlation pointers.
+          record = await runtime.handoff({workId, checkpointId:before.checkpointId, actor, stationId:payload.stationId, operation:payload.operation, payload:{deviceId:payload.payload?.deviceId,view:payload.payload?.view,commandId:stationResult.commandId||null}});
+        } else record = await runtime.handoff({ workId, checkpointId: before.checkpointId, actor, stationId: payload.stationId, operation: payload.operation, payload: payload.payload || {} });
       } else if (action === 'return') {
         // Agent-supplied flags cannot declare verified owner reality.
         record = await runtime.returnWork({ workId, checkpointId: before.checkpointId, actor, readback: payload.readback, evidenceRefs: payload.evidenceRefs || [], verified: false });
       } else throw new Error('ACTION_NOT_FOUND');
       const readback = await runtime.getWork(workId);
       if (JSON.stringify(record) !== JSON.stringify(readback)) throw new Error('WRITE_READBACK_MISMATCH');
-      return toolResult({ actor, record: readback, readbackVerified: true, ownerExecutionVerified: false });
+      return toolResult({ actor, record: readback, readbackVerified: true, ownerExecutionVerified: false, ...(stationResult ? { stationResult } : {}) });
     } catch (error) {
       const known = /^(.*_REQUIRED|WORK_NOT_FOUND|WORK_ALREADY_EXISTS|INVALID_ARGUMENT|INVALID_PAYLOAD|OWNER_NOT_GRANTED|DESTINATION_NOT_GRANTED|ACTION_NOT_FOUND|WRITE_READBACK_MISMATCH)$/;
       return toolResult({ reason: known.test(error.message) ? error.message : 'WORK_OPERATION_FAILED' }, true);

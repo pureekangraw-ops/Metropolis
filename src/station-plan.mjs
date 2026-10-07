@@ -21,6 +21,7 @@ function freeze(value) {
 }
 
 const plannedStations = [
+  {stationId:'OBSERVATORY_STATION',destinationId:'OBSERVATORY',ownerSystem:'OBSERVATORY',status:STATION_PLAN_STATUS.READY_TO_BIND,cargoKinds:[CARGO_KIND.DATA,CARGO_KIND.EVIDENCE],runtimeBinding:{kind:'DURABLE_MAILBOX',binding:'METROPOLIS_ENTRY',path:'/observatory'}},
   {
     stationId: 'FACTORY_STATION', destinationId: 'FACTORY', ownerSystem: 'FACTORY',
     status: STATION_PLAN_STATUS.READY_TO_BIND,
@@ -44,7 +45,7 @@ const plannedStations = [
 ];
 
 const FACTORY_RUNTIME_URL = 'https://factory-district.pureekangraw.workers.dev';
-plannedStations[0].runtimeBinding = freeze({ kind: 'HTTP_RUNTIME', endpoint: FACTORY_RUNTIME_URL });
+plannedStations[1].runtimeBinding = freeze({ kind: 'HTTP_RUNTIME', endpoint: FACTORY_RUNTIME_URL });
 export const STATION_PLAN_V1 = freeze({ version: STATION_PLAN_VERSION, runtimeConnected: true, stations: plannedStations });
 
 function planError(code, detail) { return Object.freeze({ code, detail }); }

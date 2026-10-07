@@ -31,7 +31,7 @@ export function createCityMap() {
   return Object.freeze({
     city: 'METROPOLIS',
     components: CITY_COMPONENTS,
-    stations: Object.freeze(['METROPOLIS_STATION', 'FACTORY_STATION', 'PRISM_STATION', 'DRIVE_STATION', 'NOTION_STATION']),
+    stations: Object.freeze(['METROPOLIS_STATION', 'FACTORY_STATION', 'PRISM_STATION', 'DRIVE_STATION', 'NOTION_STATION', 'OBSERVATORY_STATION']),
     paths: Object.freeze(['SHOP_TO_HALL', 'TAILOR_TO_HALL', 'HALL_TO_PIXIE_SERVICE', 'HALL_TO_STATION', 'POST_OFFICE_TO_MAILBOX']),
     rails: Object.freeze([]),
   });
@@ -59,7 +59,7 @@ export function createCityRuntime({ store = createMemoryStore(), clock = () => n
     if (record.checkpointId !== text(checkpointId, 'checkpointId')) throw new Error('CHECKPOINT_MISMATCH');
     const now = clock();
     const handoff = { handoffId: idFactory(), actor: text(actor, 'actor'), stationId: text(stationId, 'stationId'), operation: text(operation, 'operation'), payload: clone(payload), createdAt: now };
-    const next = { ...record, state: WORK_STATE.HANDED_OFF, handoff, history: [...record.history, { state: WORK_STATE.HANDED_OFF, at: now }], updatedAt: now };
+    const next = { ...record, state: WORK_STATE.HANDED_OFF, handoff, history: [...record.history, { state: WORK_STATE.HANDED_OFF, at: now }].slice(stationId === 'OBSERVATORY_STATION' ? -100 : 0), updatedAt: now };
     await store.put(`work:${id}`, next);
     return clone(next);
   }
