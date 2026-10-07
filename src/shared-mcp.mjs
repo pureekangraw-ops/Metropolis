@@ -186,7 +186,9 @@ function passActions(record, actor) {
 }
 function destinationAllowed(record, actor, explicit, payload = {}) {
   if (explicit.length > 0) {
-    return explicit.some(grant => grant.action === 'handoff' && grant.stationId === payload.stationId && grant.operation === payload.operation);
+    return explicit.some(grant => grant.action === 'handoff'
+      && (grant.stationId === '*' || grant.stationId === payload.stationId)
+      && (grant.operation === '*' || grant.operation === payload.operation));
   }
   return workPassAllowsHandoff(record?.workPass, {
     workId: record?.workId,
