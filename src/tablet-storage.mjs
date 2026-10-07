@@ -2,6 +2,7 @@ export const TABLET_STORAGE = Object.freeze({
   binding: 'TABLET_STORAGE',
   bucket: 'factory',
   prefix: 'metropolis/tablets/',
+  draftPrefix: 'metropolis/tablets/drafts/',
   ownsWorkTruth: false,
   stores: Object.freeze(['CONTEXT', 'ARTIFACT', 'EVIDENCE', 'SNAPSHOT']),
 });
@@ -27,4 +28,19 @@ export function tabletObjectKey({
 
 export function tabletStorageRef(input = {}) {
   return `r2://${TABLET_STORAGE.bucket}/${tabletObjectKey(input)}`;
+}
+
+export function tabletDraftObjectKey({
+  draftId,
+  name = 'tablet-draft.json',
+} = {}) {
+  const d = clean(draftId);
+  const n = clean(name);
+  if (!d) throw new Error('DRAFT_ID_REQUIRED');
+  if (!n) throw new Error('TABLET_NAME_REQUIRED');
+  return `${TABLET_STORAGE.draftPrefix}${d}/${n}`;
+}
+
+export function tabletDraftStorageRef(input = {}) {
+  return `r2://${TABLET_STORAGE.bucket}/${tabletDraftObjectKey(input)}`;
 }

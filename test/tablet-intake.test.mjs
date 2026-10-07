@@ -23,6 +23,35 @@ function memoryR2() {
   };
 }
 
+test('Draft Tablet exists before Work ID and lives under the R2 draft namespace', async () => {
+  const bucket = memoryR2();
+  const runtime = createTabletRuntime({
+    bucket,
+    sourceSha: 'd'.repeat(40),
+    now: () => '2026-10-07T07:20:00Z',
+  });
+
+  const saved = await runtime.saveDraft({
+    draftId: 'DRAFT-1',
+    createdBy: 'GO',
+    state: 'DRAFT',
+    information: { title: 'New request' },
+    inputRefs: ['input://one'],
+    ownerSystem: 'FACTORY',
+    workId: null,
+    checkpointId: null,
+  });
+
+  assert.equal(saved.status, 'DRAFT_SAVED');
+  assert.equal(saved.verified, true);
+  assert.equal(saved.tablet.draftId, 'DRAFT-1');
+  assert.equal(saved.tablet.workId, null);
+  assert.equal(saved.tablet.checkpointId, null);
+  assert.equal(saved.tablet.workCreated, false);
+  assert.equal(saved.storageRef, 'r2://factory/metropolis/tablets/drafts/DRAFT-1/tablet-draft.json');
+  assert.equal(bucket.objects.has('metropolis/tablets/drafts/DRAFT-1/tablet-draft.json'), true);
+});
+
 test('Tablet Standard v1 writes Work/Checkpoint snapshot to R2 and verifies checksum by readback', async () => {
   const bucket = memoryR2();
   const runtime = createTabletRuntime({
@@ -45,7 +74,7 @@ test('Tablet Standard v1 writes Work/Checkpoint snapshot to R2 and verifies chec
   assert.equal(issued.status, 'ISSUED');
   assert.equal(issued.verified, true);
   assert.equal(issued.tablet.schema, TABLET_STANDARD.schema);
-  assert.equal(issued.tablet.version, '1.0.0');
+  assert.equal(issued.tablet.version, '1.1.0');
   assert.equal(issued.tablet.tabletId, 'TABLET:WORK-1:CP-1');
   assert.equal(issued.tablet.workId, 'WORK-1');
   assert.equal(issued.tablet.checkpointId, 'CP-1');
@@ -100,7 +129,7 @@ test('City intake issues Tablet after Work creation and HERMES exposes only the 
 
   const pointer = reception.tabletDesk.pointers[0];
   assert.equal(pointer.tablet.tabletId, 'TABLET:WORK-INTAKE-1:CP-INTAKE-1');
-  assert.equal(pointer.tablet.version, '1.0.0');
+  assert.equal(pointer.tablet.version, '1.1.0');
   assert.equal(pointer.tablet.status, 'ISSUED');
   assert.equal(pointer.tablet.verified, true);
   assert.match(pointer.tablet.storageRef, /^r2:\/\/factory\/metropolis\/tablets\//);

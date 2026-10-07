@@ -1,3 +1,4 @@
+import { HERMES_INTAKE_FLOW } from './intake-desk.mjs';
 export const HERMES_STATION_ROLE = Object.freeze({
   id: 'HERMES',
   role: 'STATION_RECEPTION_AND_CONTINUITY',
@@ -19,7 +20,6 @@ function tabletPointer(work = {}) {
     checkpointId: work.checkpointId == null ? null : text(work.checkpointId),
     ownerSystem: work.ownerSystem == null ? null : text(work.ownerSystem),
     updatedAt: work.updatedAt || null,
-    authorizedActions: Object.freeze([...(work.authorizedActions || [])]),
     tablet: work.tablet ? Object.freeze({
       tabletId: work.tablet?.tablet?.tabletId || null,
       version: work.tablet?.tablet?.version || null,
@@ -49,6 +49,12 @@ export function createHermesReception({ actor, works = [], observedAt = new Date
     staff: HERMES_STATION_ROLE,
     actor: text(actor) || 'UNKNOWN',
     welcome: 'READY',
+    intakeDesk: Object.freeze({
+      available: true,
+      flow: HERMES_INTAKE_FLOW,
+      anchor: 'WORK_FLOW',
+      securityVisibleAsNavigation: false,
+    }),
     tabletDesk: Object.freeze({
       available: visible.length > 0,
       pointers: Object.freeze(visible),

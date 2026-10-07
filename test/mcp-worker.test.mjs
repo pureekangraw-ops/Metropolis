@@ -7,21 +7,47 @@ function storage() {
   const data = new Map();
   return { async get(k) { return structuredClone(data.get(k)); }, async put(k, v) { data.set(k, structuredClone(v)); }, async transaction(fn) { return fn(this); } };
 }
-const env = { MCP_PUBLIC_ORIGIN: origin, MCP_OAUTH_SIGNING_KEY: 'test-only-signing', MCP_OWNER_PASSCODE: 'test-only-owner', MCP_OAUTH_CLIENTS: JSON.stringify([{ clientId: 'go', clientSecret: 'test-secret-go', subject: 'GO', scope: 'metropolis-go', redirectUris: ['https://client.example/go'] }, { clientId: 'light', clientSecret: 'test-secret-light', subject: 'LIGHT', scope: 'metropolis-light', redirectUris: ['https://client.example/light'] }]), MCP_WORK_GRANTS: JSON.stringify([{ actor: 'GO', action: 'intake', workId: 'W', ownerSystem: 'FACTORY' }, { actor: 'GO', action: 'read', workId: 'W' }]) };
+const env = { MCP_PUBLIC_ORIGIN: origin, MCP_OAUTH_SIGNING_KEY: 'test-only-signing', MCP_OWNER_PASSCODE: 'test-only-owner', MCP_OAUTH_CLIENTS: JSON.stringify([{ clientId: 'go', clientSecret: 'test-secret-go', subject: 'GO', scope: 'metropolis-go', redirectUris: ['https://client.example/go'] }, { clientId: 'light', clientSecret: 'test-secret-light', subject: 'LIGHT', scope: 'metropolis-light', redirectUris: ['https://client.example/light'] }]), MCP_WORK_GRANTS: JSON.stringify([{ actor: 'GO', action: 'read', workId: 'W' }]) };
 async function call(gateway, name, args, subject = 'GO') {
   const token = await createTestAccessToken({ issuer: origin, resource: origin + '/mcp', signingKey: env.MCP_OAUTH_SIGNING_KEY, subject, scope: subject === 'GO' ? 'metropolis-go' : 'metropolis-light', clientId: subject.toLowerCase() });
   const response = await gateway.fetch(new Request(origin + '/mcp', { method: 'POST', headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json', accept: 'application/json, text/event-stream' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }) }));
   return { response, body: await response.json() };
 }
-test('Work survives a fresh gateway on the same durable storage', async () => {
+test('Work created by HERMES survives a fresh gateway on the same durable storage', async () => {
   const durable = storage();
-  const first = createGateway({ env, storage: durable, sourceSha: 'a'.repeat(40) });
+  const first = createGateway({ env: { ...env, MCP_WORK_GRANTS: '[]' }, storage: durable, sourceSha: 'a'.repeat(40) });
   await call(first, 'metropolis_arrive', {});
-  const args = { action: 'intake', workId: 'W', payload: {} };
-  assert.equal((await call(first, 'metropolis_work', args)).body.result.isError, false);
-  const next = createGateway({ env, storage: durable, sourceSha: 'a'.repeat(40) });
-  const read = await call(next, 'metropolis_work', { action: 'read', workId: 'W' });
-  assert.equal(read.body.result.structuredContent.record.checkpointId, 'W:CP-01');
+
+  const input = await call(first, 'metropolis_reception', {
+    action: 'input_information',
+    payload: { information: { title: 'Persistent work' }, ownerSystem: 'FACTORY' },
+  });
+  assert.equal(input.body.result.isError, false);
+  const draftId = input.body.result.structuredContent.result.draftId;
+
+  assert.equal((await call(first, 'metropolis_reception', {
+    action: 'review', draftId, payload: {},
+  })).body.result.isError, false);
+
+  assert.equal((await call(first, 'metropolis_reception', {
+    action: 'ready_to_create', draftId, payload: {},
+  })).body.result.isError, false);
+
+  const created = await call(first, 'metropolis_reception', {
+    action: 'create_work', draftId, payload: {},
+  });
+  assert.equal(created.body.result.isError, false);
+  const workId = created.body.result.structuredContent.result.workId;
+  const checkpointId = created.body.result.structuredContent.result.checkpointId;
+
+  const nextEnv = {
+    ...env,
+    MCP_WORK_GRANTS: JSON.stringify([{ actor: 'GO', action: 'read', workId }]),
+  };
+  const next = createGateway({ env: nextEnv, storage: durable, sourceSha: 'a'.repeat(40) });
+  const read = await call(next, 'metropolis_work', { action: 'read', workId });
+  assert.equal(read.body.result.isError, false);
+  assert.equal(read.body.result.structuredContent.record.checkpointId, checkpointId);
 });
 test('shared gateway verifies LIGHT scope and rejects legacy issuer', async () => {
   const gateway = createGateway({ env, storage: storage(), sourceSha: 'a'.repeat(40) });
