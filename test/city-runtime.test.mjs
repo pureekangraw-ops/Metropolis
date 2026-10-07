@@ -30,6 +30,49 @@ test('Work identity remains stable across intake, handoff and return', async () 
   assert.equal(returned.dataLifecycle.some(entry => entry.producer === 'MIMIR'), true);
 });
 
+test('Work Pass is persisted in the same Work record and is not inferred from requestedBy', async () => {
+  const runtime = createCityRuntime({ store: createMemoryStore(), clock: () => '2026-10-07T09:00:00.000Z' });
+
+  const withPass = await runtime.intake({
+    workId: 'WORK-WITH-PASS',
+    ownerSystem: 'PRISM',
+    requestedBy: 'GO',
+    workPassActor: 'GO',
+  });
+  assert.equal(withPass.workPass.kind, 'WORK_PASS');
+  assert.equal(withPass.workPass.status, 'ACTIVE');
+  assert.equal(withPass.workPass.workId, withPass.workId);
+  assert.equal(withPass.workPass.checkpointId, withPass.checkpointId);
+  assert.equal(withPass.workPass.actor, 'GO');
+  assert.equal(withPass.workPassRef, `work-pass://${withPass.workPass.passId}`);
+
+  const metadataOnly = await runtime.intake({
+    workId: 'WORK-METADATA-ONLY',
+    ownerSystem: 'PRISM',
+    requestedBy: 'GO',
+  });
+  assert.equal(metadataOnly.requestedBy, 'GO');
+  assert.equal(metadataOnly.workPass, null);
+  assert.equal(metadataOnly.workPassRef, null);
+});
+
+test('cancel keeps Work Pass audit identity but removes operational authority', async () => {
+  const runtime = createCityRuntime({ store: createMemoryStore(), clock: () => '2026-10-07T09:01:00.000Z' });
+  const created = await runtime.intake({
+    workId: 'WORK-CANCEL-PASS',
+    ownerSystem: 'PRISM',
+    requestedBy: 'GO',
+    workPassActor: 'GO',
+  });
+  const passId = created.workPass.passId;
+
+  const cancelled = await runtime.cancelWork({ workId: created.workId, actor: 'HERMES' });
+  assert.equal(cancelled.state, WORK_STATE.CANCELLED);
+  assert.equal(cancelled.workPass.passId, passId);
+  assert.equal(cancelled.workPass.status, 'CANCELLED');
+  assert.equal(cancelled.workPass.cancelledBy, 'HERMES');
+});
+
 test('wrong checkpoint never mutates the Work record', async () => {
   const runtime = createCityRuntime();
   const received = await runtime.intake({ workId: 'WORK-2', ownerSystem: 'FACTORY' });
