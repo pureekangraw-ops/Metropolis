@@ -542,3 +542,24 @@ test('LIGHT full-route grant can hand off and return the exact Work without wide
   assert.equal(returned.isError, false);
   assert.equal(returned.structuredContent.record.workId, 'W-LIGHT');
 });
+
+
+test('LIGHT may request COMPLETE while MIMIR remains the lifecycle actor', async () => {
+  const runtime = createCityRuntime();
+  await runtime.intake({ workId: 'W-LIGHT-CLOSE', ownerSystem: 'GO' });
+  const server = service('light-close', runtime, [
+    { actor: 'LIGHT', action: 'read', workId: 'W-LIGHT-CLOSE' },
+    { actor: 'LIGHT', action: 'complete', workId: 'W-LIGHT-CLOSE' },
+  ]);
+
+  const reply = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_work',
+    arguments: { action: 'complete', workId: 'W-LIGHT-CLOSE' },
+  }, 'light')).json()).result;
+
+  assert.equal(reply.isError, false);
+  assert.equal(reply.structuredContent.record.state, 'COMPLETED');
+  assert.equal(reply.structuredContent.record.completion.actor, 'MIMIR');
+  assert.equal(reply.structuredContent.record.completion.requestedBy, 'LIGHT');
+  assert.equal(reply.structuredContent.record.online.status, 'OFFLINE');
+});

@@ -13,7 +13,7 @@
   "vars": {
     "MCP_PUBLIC_ORIGIN": "https://metropolis.pureekangraw.workers.dev",
     "FACTORY_RUNTIME_URL": "https://factory-district.pureekangraw.workers.dev",
-    "MCP_WORK_GRANTS": "[{\"actor\":\"LIGHT\",\"action\":\"read\",\"workId\":\"WORK-e459319b-9077-46ca-8191-9e45c30f618d\"},{\"actor\":\"LIGHT\",\"action\":\"handoff\",\"workId\":\"WORK-e459319b-9077-46ca-8191-9e45c30f618d\",\"stationId\":\"*\",\"operation\":\"*\"},{\"actor\":\"LIGHT\",\"action\":\"return\",\"workId\":\"WORK-e459319b-9077-46ca-8191-9e45c30f618d\"}]",
+    "MCP_WORK_GRANTS": "[{\"actor\":\"LIGHT\",\"action\":\"read\",\"workId\":\"WORK-e459319b-9077-46ca-8191-9e45c30f618d\"},{\"actor\":\"LIGHT\",\"action\":\"handoff\",\"workId\":\"WORK-e459319b-9077-46ca-8191-9e45c30f618d\",\"stationId\":\"*\",\"operation\":\"*\"},{\"actor\":\"LIGHT\",\"action\":\"return\",\"workId\":\"WORK-e459319b-9077-46ca-8191-9e45c30f618d\"},{\"actor\":\"LIGHT\",\"action\":\"cancel\",\"workId\":\"WORK-e459319b-9077-46ca-8191-9e45c30f618d\"},{\"actor\":\"LIGHT\",\"action\":\"complete\",\"workId\":\"WORK-e459319b-9077-46ca-8191-9e45c30f618d\"}]",
     "MCP_ALLOWED_ORIGINS": "[]"
   }
 }
