@@ -134,6 +134,54 @@ test('HERMES creates Work ID only after INPUT → DRAFT → REVIEW → READY TO 
   assert.equal(created.structuredContent.result.go, true);
 });
 
+test('HERMES-created GO Work gets server-derived access without manual grants', async () => {
+  const runtime = createCityRuntime({ store: createMemoryStore() });
+  const server = service('derived', runtime, []);
+
+  const input = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_reception',
+    arguments: {
+      action: 'input_information',
+      payload: { information: { title: 'Derived access work' }, ownerSystem: 'PRISM' },
+    },
+  })).json()).result;
+  const draftId = input.structuredContent.result.draftId;
+  await rpc(server, 'tools/call', { name: 'metropolis_reception', arguments: { action: 'review', draftId, payload: {} } });
+  await rpc(server, 'tools/call', { name: 'metropolis_reception', arguments: { action: 'ready_to_create', draftId, payload: {} } });
+  const created = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_reception',
+    arguments: { action: 'create_work', draftId, payload: {} },
+  })).json()).result;
+  const workId = created.structuredContent.result.workId;
+
+  const manifest = await arrive(server);
+  const pointer = manifest.current.works.find(work => work.workId === workId);
+  assert.ok(pointer);
+  assert.equal(pointer.accessSource, 'SERVER_DERIVED_REQUESTER');
+  assert.deepEqual(pointer.authorizedActions, ['read', 'handoff', 'return']);
+
+  const read = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_work',
+    arguments: { action: 'read', workId, payload: {} },
+  })).json()).result;
+  assert.equal(read.isError, false);
+  assert.equal(read.structuredContent.record.workId, workId);
+
+  const deniedDestination = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_work',
+    arguments: { action: 'handoff', workId, payload: { stationId: 'OTHER_STATION', operation: 'BUILD' } },
+  })).json()).result;
+  assert.equal(deniedDestination.isError, true);
+  assert.equal(deniedDestination.structuredContent.reason, 'DESTINATION_NOT_GRANTED');
+
+  const lightRead = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_work',
+    arguments: { action: 'read', workId, payload: {} },
+  }, 'light')).json()).result;
+  assert.equal(lightRead.isError, true);
+  assert.equal(lightRead.structuredContent.reason, 'NO_GRANT');
+});
+
 test('READY TO RESUME gates SEARCH then resumes the existing Work ID and checkpoint', async () => {
   const runtime = createCityRuntime({ store: createMemoryStore() });
   await runtime.intake({
