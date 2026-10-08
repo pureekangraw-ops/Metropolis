@@ -220,7 +220,6 @@ export function createMetropolisMcp({ runtime, authenticate, grants = [], source
         const actions = record ? (explicit.length > 0 ? explicit.map(grant => grant.action) : passActions(record, actor)) : explicit.map(grant => grant.action);
         if (!record) return { workId, present: false, state: 'UNKNOWN', checkpointId: null, ownerSystem: null, updatedAt: null, authorizedActions: actions };
         const liveSignal = typeof runtime.getWorkSignal === 'function' ? await runtime.getWorkSignal(workId) : null;
-        const liveSignal = typeof runtime.getWorkSignal === 'function' ? await runtime.getWorkSignal(workId) : null;
         return {
           workId,
           present: true,
