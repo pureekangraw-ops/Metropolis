@@ -12,6 +12,7 @@ import { createPixieReport, createPixieStationDiagnostic } from './pixie/report-
 import { createStationJourney, closeStationJourney, normalizeJourneyBaggage } from './station-journey.mjs';
 import { createHermesIntakeDesk } from './agents/hermes/intake-desk.mjs';
 import { cancelWorkPass, completeWorkPass, createWorkPass, workPassRef } from './work-pass.mjs';
+import { createWorkStateSignalLine, WORK_SIGNAL_STATUS } from './work-state-signal.mjs';
 
 export const CITY_COMPONENTS = Object.freeze(['METROPOLIS', 'CITY_HALL', 'WORK_SYSTEM', 'POST_OFFICE', 'PIXIE_SERVICE', 'SHOP', 'SPECTRUMSALE', 'THE_TAILOR']);
 export const WORK_STATE = Object.freeze({RECEIVED:'RECEIVED',HANDED_OFF:'HANDED_OFF',RETURN_REVIEW:'RETURN_REVIEW',RETURNED:'RETURNED',COMPLETED:'COMPLETED',CANCELLED:'CANCELLED',UNKNOWN:'UNKNOWN'});
@@ -54,6 +55,7 @@ export function createCityRuntime({ store = createMemoryStore(), clock = () => n
   if (!store || typeof store.get !== 'function' || typeof store.put !== 'function') throw new TypeError('store_REQUIRED');
   const mailboxes = new Map();
   const stations = Object.freeze({ ...stationRuntimes });
+  const workStateSignals = createWorkStateSignalLine({ store, clock });
 
   async function intake({ workId = idFactory(), checkpointId, ownerSystem, requestedBy = 'UNKNOWN', workPassActor = null, inputRefs = [], intakeDraftId = null, intakeInformation = {} } = {}) {
     const id = text(workId, 'workId');
@@ -124,6 +126,10 @@ export function createCityRuntime({ store = createMemoryStore(), clock = () => n
       updatedAt: clock(),
     };
     await store.put(`work:${id}`, record);
+    await workStateSignals.publish({
+      workId:id, checkpointId:cp, status:WORK_SIGNAL_STATUS.ONLINE, publisher:'HERMES',
+      workState:WORK_STATE.RECEIVED, reason:'NEW',
+    });
     return clone(record);
   }
 
@@ -134,7 +140,12 @@ export function createCityRuntime({ store = createMemoryStore(), clock = () => n
     const now=clock();
     const next={...record,online:{status:'ONLINE',activation:'RESUME',announcedBy:'HERMES',activatedAt:now,lastAnnouncedAt:now},
       history:[...(record.history||[]),{event:'WORK_ONLINE',activation:'RESUME',at:now}],updatedAt:now};
-    await store.put(`work:${id}`,next); return clone(next);
+    await store.put(`work:${id}`,next);
+    await workStateSignals.publish({
+      workId:id, checkpointId:record.checkpointId, status:WORK_SIGNAL_STATUS.ONLINE, publisher:'HERMES',
+      workState:record.state, reason:'RESUME',
+    });
+    return clone(next);
   }
 
   async function handoff({workId,checkpointId,stationId,operation,actor='HERMES',payload={}}={}) {
@@ -240,14 +251,28 @@ export function createCityRuntime({ store = createMemoryStore(), clock = () => n
     const id=text(workId,'workId'); const record=await store.get(`work:${id}`); if(!record) throw new Error('WORK_NOT_FOUND'); if(record.state===WORK_STATE.CANCELLED) return clone(record);
     const now=clock(); const next={...record,state:WORK_STATE.CANCELLED,online:{...(record.online||{}),status:'OFFLINE',closure:'CANCEL',closedAt:now,closedBy:'MIMIR'},
       workPass:cancelWorkPass(record.workPass,{cancelledAt:now,cancelledBy:'MIMIR'}),cancellation:{actor:'MIMIR',requestedBy:requestedBy||actor,cancelledAt:now},history:[...(record.history||[]),{state:WORK_STATE.CANCELLED,actor:'MIMIR',at:now}],updatedAt:now};
-    await store.put(`work:${id}`,next); return clone(next);
+    await store.put(`work:${id}`,next);
+    await workStateSignals.publish({
+      workId:id, checkpointId:record.checkpointId, status:WORK_SIGNAL_STATUS.OFFLINE, publisher:'MIMIR',
+      workState:WORK_STATE.CANCELLED, reason:'CANCEL',
+    });
+    return clone(next);
   }
   async function completeWork({workId,actor='MIMIR',requestedBy=null}={}) {
     const id=text(workId,'workId'); const record=await store.get(`work:${id}`); if(!record) throw new Error('WORK_NOT_FOUND'); if(record.state===WORK_STATE.COMPLETED) return clone(record); if(record.state===WORK_STATE.CANCELLED) throw new Error('WORK_CANCELLED');
     const now=clock(); const next={...record,state:WORK_STATE.COMPLETED,online:{...(record.online||{}),status:'OFFLINE',closure:'COMPLETE',closedAt:now,closedBy:'MIMIR'},
       workPass:completeWorkPass(record.workPass,{completedAt:now,completedBy:'MIMIR'}),completion:{actor:'MIMIR',requestedBy:requestedBy||actor,completedAt:now},history:[...(record.history||[]),{state:WORK_STATE.COMPLETED,actor:'MIMIR',at:now}],updatedAt:now};
-    await store.put(`work:${id}`,next); return clone(next);
+    await store.put(`work:${id}`,next);
+    await workStateSignals.publish({
+      workId:id, checkpointId:record.checkpointId, status:WORK_SIGNAL_STATUS.OFFLINE, publisher:'MIMIR',
+      workState:WORK_STATE.COMPLETED, reason:'COMPLETE',
+    });
+    return clone(next);
   }
+
+  async function getWorkSignal(workId) { return workStateSignals.getCurrent(workId); }
+  async function listWorkSignals() { return workStateSignals.listCurrent(); }
+  async function listWorkSignalHistory(workId) { return workStateSignals.listHistory(workId); }
 
   const reception = createHermesIntakeDesk({
     store,
@@ -262,5 +287,5 @@ export function createCityRuntime({ store = createMemoryStore(), clock = () => n
 
   async function health() { return { service: 'metropolis', status: 'READY', sourceSha, components: Object.fromEntries(CITY_COMPONENTS.map((component) => [component, { status: 'READY' }])), mailboxCount: [...mailboxes.values()].filter((mailbox) => mailbox.status === MAILBOX_STATUS.OPEN).length, observedAt: clock() }; }
 
-  return Object.freeze({ intake, resumeWork, handoff, returnWork, cancelWork, completeWork, registerMailbox, sendCargo, getWork, listWorks, reception, health, map: createCityMap() });
+  return Object.freeze({ intake, resumeWork, handoff, returnWork, cancelWork, completeWork, registerMailbox, sendCargo, getWork, listWorks, getWorkSignal, listWorkSignals, listWorkSignalHistory, reception, health, map: createCityMap() });
 }

@@ -40,3 +40,19 @@ to the explicit GO/BIG review policy of the owning system.
 
 `SAME CAPABILITY != SAME ROLE`  
 `IDENTITY SEPARATION != CAPABILITY REDUCTION`
+
+
+## Work-state signal line
+
+City Hall keeps a lightweight live projection for Work availability. HERMES is
+the only publisher that announces a Work ONLINE (new or resumed), and MIMIR is
+the only publisher that announces it OFFLINE (cancelled or completed).
+
+A work-state signal carries only Work ID, Checkpoint ID, ONLINE/OFFLINE status,
+the Work state at announcement time, publisher, sequence, reason and timestamp.
+It does not carry context, files, artifacts or other cargo. Heavy data continues
+through PIXIE/cargo paths.
+
+`SIGNAL != CONTEXT != CARGO`  
+`HERMES -> ONLINE`  
+`MIMIR -> OFFLINE`
