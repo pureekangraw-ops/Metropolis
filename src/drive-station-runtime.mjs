@@ -68,8 +68,8 @@ export function createDriveStationRuntime({
     return { verified: true, fileId, sha256, bytes: bytes.byteLength, observedAt: clock() };
   }
 
-  async function handoff({ workId, checkpointId, operation, payload = {}, actor } = {}) {
-    if (!configured) fatal('DRIVE_STATION_NOT_CONFIGURED');
+
+  function permitted({ workId, checkpointId, actor, operation, payload }) {
     const work = verifyId(workId, 'WORK_ID');
     const checkpoint = verifyId(checkpointId, 'CHECKPOINT_ID');
     if (operation !== 'ARCHIVE_CARGO') fatal('DRIVE_OPERATION_NOT_ALLOWED');
@@ -79,6 +79,39 @@ export function createDriveStationRuntime({
       || !payload.workPass?.permissions?.handoff?.some(x => x.stationId === DRIVE_STATION_ID)
       || payload.workPassRef !== 'work-pass://' + payload.workPass?.passId) fatal('DRIVE_WORK_PASS_DENIED');
     if (!KINDS.has(payload.dataKind)) fatal('DRIVE_CARGO_KIND_INVALID');
+    return { work, checkpoint };
+  }
+
+  async function stage({ workId, checkpointId, operation, payload = {}, actor } = {}) {
+    if (!configured || !bucket?.put) fatal('DRIVE_STATION_NOT_CONFIGURED');
+    const { work, checkpoint } = permitted({ workId, checkpointId, actor, operation, payload });
+    const name = value(payload.fileName);
+    if (!/^[A-Za-z0-9._-]{1,120}$/.test(name) || name === '.' || name === '..')
+      fatal('DRIVE_FILENAME_INVALID');
+    if (typeof payload.content !== 'string') fatal('DRIVE_INLINE_CONTENT_INVALID');
+    const mimeType = value(payload.mimeType || 'text/plain').toLowerCase();
+    if (!MIME.has(mimeType)) fatal('DRIVE_MIME_NOT_ALLOWED');
+    const bytes = enc.encode(payload.content);
+    if (!bytes.byteLength || bytes.byteLength > 32768) fatal('DRIVE_INLINE_SIZE_INVALID');
+    const key = 'metropolis/drive/outbox/' + work + '/' + checkpoint + '/' + name;
+    const digestBefore = await digest(bytes);
+    // Never replace an existing source object with different contents.
+    const previous = await bucket.get(key);
+    if (previous && await digest(await previous.arrayBuffer()) !== digestBefore)
+      fatal('DRIVE_SOURCE_ALREADY_EXISTS');
+    if (!previous) await bucket.put(key, bytes, {
+      httpMetadata: { contentType: mimeType },
+      customMetadata: { workId: work, checkpointId: checkpoint, sha256: digestBefore },
+    });
+    const saved = await bucket.get(key);
+    if (!saved || await digest(await saved.arrayBuffer()) !== digestBefore)
+      fatal('DRIVE_STAGE_R2_READBACK_MISMATCH');
+    return Object.freeze({ payloadRef: 'r2://factory/' + key, sha256: digestBefore, bytes: bytes.byteLength });
+  }
+
+  async function handoff({ workId, checkpointId, operation, payload = {}, actor } = {}) {
+    if (!configured) fatal('DRIVE_STATION_NOT_CONFIGURED');
+    const { work, checkpoint } = permitted({ workId, checkpointId, actor, operation, payload });
     // Work-scoped R2 location prevents arbitrary reads from the shared R2 bucket.
     const root = 'metropolis/drive/outbox/' + work + '/' + checkpoint + '/';
     const ref = value(payload.payloadRef);
@@ -99,7 +132,7 @@ export function createDriveStationRuntime({
     const auth = await token();
     const q = "'" + folderId.replace(/'/g, "\\'") + "' in parents and trashed = false and appProperties has { key='metroCargoKey' and value='" + keyHash + "' }";
     const search = await (await api(BASE + '/files?' + new URLSearchParams({
-      q, fields: 'nextPageToken,files(id,appProperties,parents,trashed)', page_size: '20',
+      q, fields: 'nextPageToken,files(id,appProperties,parents,trashed)', pageSize: '20',
     }), auth)).json();
     if (search.nextPageToken || !Array.isArray(search.files) || search.files.length > 1)
       fatal('DRIVE_CARGO_DEDUP_UNCERTAIN');
@@ -157,5 +190,5 @@ export function createDriveStationRuntime({
       readbackSha256: confirmed.sha256, observedAt: confirmed.observedAt,
     });
   }
-  return Object.freeze({ configured, profile, handoff, readback });
+  return Object.freeze({ configured, profile, stage, handoff, readback });
 }
