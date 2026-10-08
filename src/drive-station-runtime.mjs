@@ -213,6 +213,7 @@ export function createDriveStationRuntime({
       sourceRef: proof.sourceRef,
       contentSha256: proof.contentSha256,
       providerRef: proof.providerRef,
+      evidenceRef: 'drive-proof://' + proof.fileId + '/' + proof.contentSha256,
       fileId,
       cargoKey,
       sourcePreserved: true,
