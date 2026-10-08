@@ -270,7 +270,6 @@ export function createMetropolisMcp({ runtime, authenticate, grants = [], source
     if (name === 'metropolis_arrive') return toolResult(current);
     if (name === 'metropolis_reception') {
       try {
-        if (actor !== 'GO') return toolResult({ reason: 'NO_RECEPTION_AUTHORITY' }, true);
         const action = required(args.action, 'action');
         if (!RECEPTION_ACTIONS.includes(action)) throw new Error('ACTION_NOT_FOUND');
         if (!schemaMatches(args, receptionInputSchema)) throw new Error('INVALID_ARGUMENT');
