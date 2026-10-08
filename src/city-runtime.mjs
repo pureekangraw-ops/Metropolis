@@ -13,7 +13,6 @@ import { createStationJourney, closeStationJourney, normalizeJourneyBaggage } fr
 import { createHermesIntakeDesk } from './agents/hermes/intake-desk.mjs';
 import { cancelWorkPass, completeWorkPass, createWorkPass, workPassRef } from './work-pass.mjs';
 import { createWorkStateSignalLine, WORK_SIGNAL_STATUS } from './work-state-signal.mjs';
-import { createWorkStateSignalLine, WORK_SIGNAL_STATUS } from './work-state-signal.mjs';
 
 export const CITY_COMPONENTS = Object.freeze(['METROPOLIS', 'CITY_HALL', 'WORK_SYSTEM', 'POST_OFFICE', 'PIXIE_SERVICE', 'SHOP', 'SPECTRUMSALE', 'THE_TAILOR']);
 export const WORK_STATE = Object.freeze({RECEIVED:'RECEIVED',HANDED_OFF:'HANDED_OFF',RETURN_REVIEW:'RETURN_REVIEW',RETURNED:'RETURNED',COMPLETED:'COMPLETED',CANCELLED:'CANCELLED',UNKNOWN:'UNKNOWN'});
@@ -56,7 +55,6 @@ export function createCityRuntime({ store = createMemoryStore(), clock = () => n
   if (!store || typeof store.get !== 'function' || typeof store.put !== 'function') throw new TypeError('store_REQUIRED');
   const mailboxes = new Map();
   const stations = Object.freeze({ ...stationRuntimes });
-  const workStateSignals = createWorkStateSignalLine({ store, clock });
   const workStateSignals = createWorkStateSignalLine({ store, clock });
 
   async function intake({ workId = idFactory(), checkpointId, ownerSystem, requestedBy = 'UNKNOWN', workPassActor = null, inputRefs = [], intakeDraftId = null, intakeInformation = {} } = {}) {
