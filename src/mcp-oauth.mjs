@@ -239,6 +239,15 @@ function protectedResourceForMetadata(config, _path) {
   return defaultResource(config);
 }
 
+function clientAllowsTokenIdentity(client, payload, config) {
+  const delegated = Object.hasOwn(payload, 'act');
+  if (delegated) {
+    const ownerId = String(config.ownerId || '').trim();
+    if (!ownerId || payload.sub !== ownerId || actorIdentity(payload.act)?.scope !== payload.scope) return false;
+  }
+  return clientAllowsIdentity(client, delegated ? payload.act : payload.sub, payload.scope);
+}
+
 function clientAllowsIdentity(client, subject, scope) {
   if (client?.kind === 'CIMD') {
     return client.fixedIdentity
@@ -285,6 +294,7 @@ export async function createTestAuthorizationCode(config = {}) {
     iss: config.issuer,
     aud: config.clientId,
     sub: config.subject || 'big',
+    ...(config.actor ? { act: config.actor } : {}),
     redirect_uri: config.redirectUri,
     code_challenge: config.codeChallenge,
     resource: config.resource || config.issuer + '/mcp',
@@ -305,6 +315,7 @@ export async function createAccessToken(config = {}) {
     aud: config.resource || config.issuer + '/mcp',
     ...(config.clientId ? { client_id: String(config.clientId) } : {}),
     sub: config.subject || 'big',
+    ...(config.actor ? { act: config.actor } : {}),
     scope: config.scope || 'go-hub',
     iat: issuedAt,
     exp: config.expiresAt ?? issuedAt + ttlSeconds,
@@ -323,6 +334,7 @@ export async function createTestRefreshToken(config = {}) {
     iss: config.issuer,
     aud: config.clientId,
     sub: config.subject || 'big',
+    ...(config.actor ? { act: config.actor } : {}),
     resource: config.resource || config.issuer + '/mcp',
     scope: config.scope || 'go-hub',
     iat: issuedAt,
@@ -340,6 +352,7 @@ export async function verifyAccessToken(request, config = {}) {
   if (payload.type !== 'access' || payload.iss !== config.issuer || payload.aud !== expectedResource || !Number.isFinite(payload.exp) || payload.exp <= current) {
     throw new Error('invalid access token');
   }
+  if (Object.hasOwn(payload, 'act') && (!String(config.ownerId || '').trim() || payload.sub !== config.ownerId || actorIdentity(payload.act)?.scope !== payload.scope)) throw new Error('invalid delegated identity');
   const clientId = String(payload.client_id || '').trim();
   if (config.requireClientId === true && !clientId) throw new Error('invalid access token');
   const registered = oauthClients(config).find(client => client.clientId === clientId);
@@ -347,10 +360,10 @@ export async function verifyAccessToken(request, config = {}) {
   const cimdAllowed = config.allowCimd === true
     && validCimdClientId(clientId, config)
     && (knownCimd?.fixedIdentity
-      ? clientAllowsIdentity(knownCimd, payload.sub, payload.scope)
-      : actorIdentity(payload.sub)?.scope === payload.scope);
+      ? clientAllowsTokenIdentity(knownCimd, payload, config)
+      : actorIdentity(Object.hasOwn(payload, 'act') ? payload.act : payload.sub)?.scope === payload.scope);
   if (registered) {
-    if (!clientAllowsIdentity(registered, payload.sub, payload.scope)) throw new Error('client identity mismatch');
+    if (!clientAllowsTokenIdentity(registered, payload, config)) throw new Error('client identity mismatch');
   } else if (!cimdAllowed) {
     const acceptedClientIds = new Set([
       String(config.clientId || '').trim(),
@@ -359,11 +372,13 @@ export async function verifyAccessToken(request, config = {}) {
     const acceptedIdentities = Array.isArray(config.acceptedIdentities) && config.acceptedIdentities.length
       ? config.acceptedIdentities.map(identity => String(identity?.subject || '') + '\u0000' + String(identity?.scope || ''))
       : [];
-    if (!acceptedClientIds.has(clientId) || (acceptedIdentities.length && !acceptedIdentities.includes(String(payload.sub) + '\u0000' + String(payload.scope)))) {
+    if (!acceptedClientIds.has(clientId) || (acceptedIdentities.length && !acceptedIdentities.includes(String(Object.hasOwn(payload, 'act') ? payload.act : payload.sub) + '\u0000' + String(payload.scope)))) {
       throw new Error('invalid access token');
     }
   }
-  return { subject: payload.sub, scope: payload.scope };
+  return Object.hasOwn(payload, 'act')
+    ? { subject: payload.sub, scope: payload.scope, owner: payload.sub, actor: payload.act, delegated: true }
+    : { subject: payload.sub, scope: payload.scope };
 }
 
 function scopesForMetadata(config) {
@@ -425,7 +440,10 @@ function authorizePage(values) {
   const identity = values.fixedIdentity
     ? `<input type="hidden" name="actor" value="${escapeHtml(values.fixedIdentity.subject)}"><p>Enter as <strong>${escapeHtml(values.fixedIdentity.subject)}</strong></p>`
     : '<label>Enter as <select name="actor" required><option value="GO">GO</option><option value="LIGHT">LIGHT</option></select></label>';
-  return new Response(`<!doctype html><html><meta name="viewport" content="width=device-width"><title>Metropolis authorization</title><body><main><h1>Metropolis</h1><p>Authorize this Metropolis connection.</p><form method="post">${hidden}${identity}<label>Owner passcode <input name="passcode" type="password" autocomplete="current-password" required></label><button type="submit">Authorize</button></form></main></body></html>`, {
+  const ownerNotice = values.ownerId
+    ? `<p>Owner <strong>${escapeHtml(values.ownerId)}</strong> authorizes this agent to act on their behalf, within Metropolis policy.</p>`
+    : '';
+  return new Response(`<!doctype html><html><meta name="viewport" content="width=device-width"><title>Metropolis authorization</title><body><main><h1>Metropolis</h1><p>Authorize this Metropolis connection.</p>${ownerNotice}<form method="post">${hidden}${identity}<label>Owner passcode <input name="passcode" type="password" autocomplete="current-password" required></label><button type="submit">Authorize</button></form></main></body></html>`, {
     headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' },
   });
 }
@@ -457,7 +475,7 @@ async function clientFromTokenRequest(request, form, config) {
 function validRefreshToken(payload, config, client, resource, current) {
   return Boolean(
     payload && payload.type === 'refresh' && payload.iss === config.issuer &&
-    payload.aud === client.clientId && clientAllowsIdentity(client, payload.sub, payload.scope) &&
+    payload.aud === client.clientId && clientAllowsTokenIdentity(client, payload, config) &&
     payload.resource === resource && Number.isFinite(payload.exp) && payload.exp > current,
   );
 }
@@ -498,6 +516,7 @@ export function createOAuthHandler(config = {}) {
             scope: values.requestedScope,
           },
           fixedIdentity: values.fixedIdentity,
+          ownerId: config.ownerId || null,
         });
       }
 
@@ -521,7 +540,8 @@ export function createOAuthHandler(config = {}) {
         const code = await createTestAuthorizationCode({
           ...config,
           clientId: checked.client.clientId,
-          subject: chosen.subject,
+          subject: config.ownerId || chosen.subject,
+          actor: config.ownerId ? chosen.subject : undefined,
           scope: chosen.scope,
           redirectUri: checked.redirectUri,
           codeChallenge: checked.codeChallenge,
@@ -555,9 +575,9 @@ export function createOAuthHandler(config = {}) {
           catch { return json({ error: 'invalid_grant' }, 400); }
           if (!validRefreshToken(refresh, config, client, resource, nowSeconds(config))) return json({ error: 'invalid_grant' }, 400);
           if (!await config.ledger.consume('refresh:' + await sha256Hex(refreshToken), refresh.exp)) return json({ error: 'invalid_grant' }, 400);
-          const rotatedRefreshToken = await createTestRefreshToken({ ...config, clientId: client.clientId, resource, subject: refresh.sub, scope: refresh.scope });
+          const rotatedRefreshToken = await createTestRefreshToken({ ...config, clientId: client.clientId, resource, subject: refresh.sub, actor: refresh.act, scope: refresh.scope });
           return json({
-            access_token: await createTestAccessToken({ ...config, clientId: client.clientId, resource, subject: refresh.sub, scope: refresh.scope }),
+            access_token: await createTestAccessToken({ ...config, clientId: client.clientId, resource, subject: refresh.sub, actor: refresh.act, scope: refresh.scope }),
             token_type: 'Bearer',
             expires_in: ACCESS_TOKEN_TTL_SECONDS,
             refresh_token: rotatedRefreshToken,
@@ -573,7 +593,7 @@ export function createOAuthHandler(config = {}) {
         catch { return json({ error: 'invalid_grant' }, 400); }
         const current = nowSeconds(config);
         if (code.type !== 'code' || code.iss !== config.issuer || code.aud !== client.clientId ||
-            !clientAllowsIdentity(client, code.sub, code.scope) || code.redirect_uri !== redirectUri || code.resource !== resource ||
+            !clientAllowsTokenIdentity(client, code, config) || code.redirect_uri !== redirectUri || code.resource !== resource ||
             !Number.isFinite(code.exp) || code.exp <= current) {
           return json({ error: 'invalid_grant' }, 400);
         }
@@ -581,10 +601,10 @@ export function createOAuthHandler(config = {}) {
         if (!timingSafeEqual(await sha256Base64url(verifier), code.code_challenge)) return json({ error: 'invalid_grant' }, 400);
         if (!await config.ledger.consume('code:' + await sha256Hex(String(form.get('code'))), code.exp)) return json({ error: 'invalid_grant' }, 400);
         return json({
-          access_token: await createTestAccessToken({ ...config, clientId: client.clientId, resource, subject: code.sub, scope: code.scope }),
+          access_token: await createTestAccessToken({ ...config, clientId: client.clientId, resource, subject: code.sub, actor: code.act, scope: code.scope }),
           token_type: 'Bearer',
           expires_in: ACCESS_TOKEN_TTL_SECONDS,
-          refresh_token: await createTestRefreshToken({ ...config, clientId: client.clientId, resource, subject: code.sub, scope: code.scope }),
+          refresh_token: await createTestRefreshToken({ ...config, clientId: client.clientId, resource, subject: code.sub, actor: code.act, scope: code.scope }),
           refresh_token_expires_in: refreshTokenTtlSeconds(config),
           scope: code.scope,
         }, 200, { 'cache-control': 'no-store' });
