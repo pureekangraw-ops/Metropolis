@@ -109,3 +109,33 @@ test('City service exposes health and Work intake without a second Work identity
   const readback = await service.fetch(new Request('https://metropolis.example/work/WORK-3'));
   assert.equal((await readback.json()).workId, 'WORK-3');
 });
+
+
+test('HERMES brings Work online and MIMIR takes it offline through the Hall signal line', async () => {
+  let n = 0;
+  const runtime = createCityRuntime({
+    store: createMemoryStore(),
+    clock: () => `2026-10-08T07:00:${String(n++).padStart(2, '0')}Z`,
+  });
+
+  const created = await runtime.intake({
+    workId:'WORK-SIGNAL-1', ownerSystem:'METROPOLIS', requestedBy:'GO', workPassActor:'GO',
+  });
+  const first = await runtime.getWorkSignal(created.workId);
+  assert.equal(first.publisher, 'HERMES');
+  assert.equal(first.status, 'ONLINE');
+  assert.equal(first.sequence, 1);
+
+  await runtime.resumeWork({ workId:created.workId });
+  const resumed = await runtime.getWorkSignal(created.workId);
+  assert.equal(resumed.publisher, 'HERMES');
+  assert.equal(resumed.status, 'ONLINE');
+  assert.equal(resumed.sequence, 2);
+
+  await runtime.completeWork({ workId:created.workId, requestedBy:'GO' });
+  const closed = await runtime.getWorkSignal(created.workId);
+  assert.equal(closed.publisher, 'MIMIR');
+  assert.equal(closed.status, 'OFFLINE');
+  assert.equal(closed.workState, 'COMPLETED');
+  assert.equal(closed.sequence, 3);
+});
