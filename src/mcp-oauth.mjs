@@ -125,13 +125,19 @@ function validCimdClientId(value) {
 
 const CHATGPT_CIMD_CLIENT_ID = 'https://chatgpt.com/oauth/client.json';
 const CHATGPT_CIMD_REDIRECT_URI = 'https://chatgpt.com/connector_platform_oauth_redirect';
+const NOTION_CIMD_CLIENT_ID = 'https://app.notion.com/oauth/mcp-client-metadata.json';
+const NOTION_CIMD_REDIRECT_URI = 'https://app.notion.com/workflows/mcp/oauth/callback';
 
 function knownCimdClient(config, clientId) {
-  if (clientId !== CHATGPT_CIMD_CLIENT_ID) return null;
+  // Pin the public client's published callback, as for ChatGPT, so authorization
+  // does not depend on provider metadata being reachable from the Worker.
+  const redirectUri = clientId === CHATGPT_CIMD_CLIENT_ID ? CHATGPT_CIMD_REDIRECT_URI
+    : clientId === NOTION_CIMD_CLIENT_ID ? NOTION_CIMD_REDIRECT_URI : null;
+  if (!redirectUri) return null;
   return {
     clientId,
     clientSecret: '',
-    redirectUris: [CHATGPT_CIMD_REDIRECT_URI],
+    redirectUris: [redirectUri],
     resources: [defaultResource(config)],
     subject: null,
     scope: null,
