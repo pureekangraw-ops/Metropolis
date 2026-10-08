@@ -112,7 +112,7 @@ export function createGateway({ env, storage, sourceSha = SOURCE_SHA } = {}) {
       allowedOrigins: [cfg.issuer, 'https://chatgpt.com', ...JSON.parse(env.MCP_ALLOWED_ORIGINS || '[]')],
       authenticate: authenticateMcp,
       appendDelegationAudit: async event => {
-        if (!event?.eventId || !event?.stage || !event?.owner || !event?.actor) throw new Error('DELEGATION_AUDIT_INVALID');
+        if (!event?.eventId || !event?.stage || !event?.owner || !event?.actingAgent) throw new Error('DELEGATION_AUDIT_INVALID');
         // Durable Object storage is serialized by MetropolisEntry and keys never overwrite.
         const key = 'delegation:audit:' + event.eventId + ':' + event.stage;
         if (await storage.get(key)) throw new Error('DELEGATION_AUDIT_DUPLICATE');
