@@ -53,6 +53,15 @@ const FACTORY_RUNTIME_URL = 'https://factory-district.pureekangraw.workers.dev';
 plannedStations[0].runtimeBinding = freeze({ kind: 'HTTP_RUNTIME', endpoint: FACTORY_RUNTIME_URL });
 export const STATION_PLAN_V1 = freeze({ version: STATION_PLAN_VERSION, runtimeConnected: true, stations: plannedStations });
 
+// The static Station Plan stays unbound until the Worker actually has owner credentials.
+// Never advertise Google Drive as connected merely because its station is mapped.
+export function stationPlanForRuntime({ driveConfigured = false } = {}) {
+  const stations = STATION_PLAN_V1.stations.map(station => station.stationId === 'DRIVE_STATION' && driveConfigured
+    ? { ...station, runtimeBinding: { kind: 'GOOGLE_DRIVE_OAUTH', capability: 'ARCHIVE_DATA', verified: false } }
+    : { ...station });
+  return freeze({ ...STATION_PLAN_V1, stations });
+}
+
 function planError(code, detail) { return Object.freeze({ code, detail }); }
 
 export function validateStationPlan(plan = STATION_PLAN_V1) {
