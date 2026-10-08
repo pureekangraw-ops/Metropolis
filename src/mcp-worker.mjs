@@ -5,6 +5,7 @@ import { SOURCE_SHA } from './mcp-source-identity.mjs';
 import { createFactoryStationRuntime } from './factory-station-runtime.mjs';
 import { createTabletRuntime } from './tablet-runtime.mjs';
 import { createDriveStationRuntime } from './drive-station-runtime.mjs';
+import { stationPlanForRuntime } from './station-plan.mjs';
 
 export async function bufferRequest(request, { timeoutMs = 10000, maxBytes = 65536 } = {}) {
   if (!request.body) return request;
@@ -122,7 +123,7 @@ export function createGateway({ env, storage, sourceSha = SOURCE_SHA } = {}) {
   } catch { /* Missing or invalid owner configuration fails closed. */ }
   return { async fetch(request) {
     const url = new URL(request.url);
-    if (url.pathname === '/health') return json({ service: 'METROPOLIS_MCP', version: '1.0.0', sourceSha, status: configured ? 'READY' : 'NOT_CONFIGURED', persistentStorage: Boolean(storage), observedAt: new Date().toISOString(), ownerSystemsVerified: false, driveStation: driveConfigured ? 'BOUND_UNVERIFIED' : 'NOT_CONFIGURED' }, configured ? 200 : 503);
+    if (url.pathname === '/health') return json({ service: 'METROPOLIS_MCP', version: '1.0.0', sourceSha, status: configured ? 'READY' : 'NOT_CONFIGURED', persistentStorage: Boolean(storage), observedAt: new Date().toISOString(), ownerSystemsVerified: false, driveStation: driveConfigured ? 'BOUND_UNVERIFIED' : 'NOT_CONFIGURED', stationPlan: stationPlanForRuntime({ driveConfigured }) }, configured ? 200 : 503);
     if (!configured) return json({ reason: 'METROPOLIS_MCP_NOT_CONFIGURED' }, 503);
     if (url.origin !== env.MCP_PUBLIC_ORIGIN) return json({ reason: 'ORIGIN_MISMATCH' }, 403);
     if (url.pathname.startsWith('/oauth/') || url.pathname.startsWith('/.well-known/')) {
