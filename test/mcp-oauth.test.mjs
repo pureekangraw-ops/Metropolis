@@ -4,6 +4,52 @@ import { createOAuthHandler, createTestAuthorizationCode, createTestRefreshToken
 const issuer = 'https://city.example';
 const verifier = 'v'.repeat(64);
 const challenge = Buffer.from(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier))).toString('base64url');
+
+test('Notion CIMD authorizes LIGHT and exchanges and refreshes its tokens', async () => {
+  const clientId = 'https://app.notion.com/oauth/mcp-client-metadata.json';
+  const redirectUri = 'https://app.notion.com/workflows/mcp/oauth/callback';
+  const cfg = { ...config(), allowCimd: true, fetchImpl: async url => {
+    assert.equal(url, clientId);
+    return Response.json({ client_id: clientId, redirect_uris: [redirectUri],
+      grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'],
+      token_endpoint_auth_method: 'none' });
+  } };
+  const handler = createOAuthHandler(cfg);
+  const params = { response_type: 'code', client_id: clientId, redirect_uri: redirectUri,
+    code_challenge: challenge, code_challenge_method: 'S256', resource: cfg.resource,
+    scope: 'metropolis-go metropolis-light', state: 'notion-test' };
+  const page = await handler(new Request(issuer + '/oauth/authorize?' + new URLSearchParams(params)));
+  assert.equal(page.status, 200);
+  assert.match(await page.text(), /option value="LIGHT"/);
+  const authorized = await handler(new Request(issuer + '/oauth/authorize', {
+    method: 'POST', body: new URLSearchParams({ ...params, actor: 'LIGHT', passcode: cfg.ownerPasscode }) }));
+  assert.equal(authorized.status, 302);
+  const location = new URL(authorized.headers.get('location'));
+  assert.equal(location.origin + location.pathname, redirectUri);
+  assert.equal(location.searchParams.get('state'), 'notion-test');
+  const exchange = await handler(new Request(issuer + '/oauth/token', { method: 'POST',
+    body: new URLSearchParams({ grant_type: 'authorization_code', client_id: clientId,
+      code: location.searchParams.get('code'), code_verifier: verifier,
+      redirect_uri: redirectUri, resource: cfg.resource }) }));
+  assert.equal(exchange.status, 200);
+  const tokens = await exchange.json();
+  assert.equal(tokens.scope, 'metropolis-light');
+  const identity = access => verifyAccessToken(new Request(cfg.resource,
+    { headers: { authorization: 'Bearer ' + access } }), cfg);
+  assert.deepEqual(await identity(tokens.access_token), { subject: 'LIGHT', scope: 'metropolis-light' });
+  const refresh = await handler(new Request(issuer + '/oauth/token', { method: 'POST',
+    body: new URLSearchParams({ grant_type: 'refresh_token', client_id: clientId,
+      refresh_token: tokens.refresh_token, resource: cfg.resource }) }));
+  assert.equal(refresh.status, 200);
+  assert.deepEqual(await identity((await refresh.json()).access_token), { subject: 'LIGHT', scope: 'metropolis-light' });
+  for (const badId of ['https://app.notion.com/oauth/other.json', 'https://app.notion.com.evil.example/oauth/mcp-client-metadata.json']) {
+    const bad = await handler(new Request(issuer + '/oauth/authorize?' + new URLSearchParams({ ...params, client_id: badId })));
+    assert.equal(bad.status, 400);
+    assert.deepEqual(await bad.json(), { code: 'OAUTH_INVALID_CLIENT' });
+  }
+  const badRedirect = await handler(new Request(issuer + '/oauth/authorize?' + new URLSearchParams({ ...params, redirect_uri: 'https://evil.example/callback' })));
+  assert.deepEqual(await badRedirect.json(), { code: 'OAUTH_INVALID_REDIRECT_URI' });
+});
 function config() {
   const consumed = new Set(), failures = new Map();
   return { issuer, resource: issuer + '/mcp', signingKey: 'test-only-key', ownerPasscode: 'test-only-owner', clientId: 'go', clientSecret: 'test-only-secret', redirectUri: 'https://client.example/callback', subject: 'GO', scope: 'metropolis-go', now: () => 1000,

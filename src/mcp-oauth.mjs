@@ -114,7 +114,9 @@ function identityFromRequestedScope(scope) {
 function validCimdClientId(value) {
   try {
     const url = new URL(String(value || ''));
-    if (url.protocol !== 'https:' || url.hostname !== 'chatgpt.com' || url.username || url.password || url.search || url.hash) return false;
+    if (url.protocol !== 'https:' || url.port || url.username || url.password || url.search || url.hash) return false;
+    if (url.hostname === 'app.notion.com') return url.pathname === '/oauth/mcp-client-metadata.json';
+    if (url.hostname !== 'chatgpt.com') return false;
     return /^\/oauth\/(?:client\.json|[^/]+\/client\.json)$/.test(url.pathname);
   } catch {
     return false;
