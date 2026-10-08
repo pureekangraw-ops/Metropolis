@@ -146,3 +146,19 @@ test('known ChatGPT CIMD client works even when remote metadata fetch is unavail
   assert.match(html, /name="passcode"/);
   assert.match(html, /value="https:\/\/chatgpt\.com\/oauth\/client\.json"/);
 });
+
+test('known Notion CIMD works without a runtime metadata fetch and pins its callback', async () => {
+  const cfg = { ...config(), allowCimd: true,
+    fetchImpl: async () => { throw new Error('network unavailable'); } };
+  const handler = createOAuthHandler(cfg);
+  const params = { response_type: 'code',
+    client_id: 'https://app.notion.com/oauth/mcp-client-metadata.json',
+    redirect_uri: 'https://app.notion.com/workflows/mcp/oauth/callback',
+    code_challenge: challenge, code_challenge_method: 'S256', resource: cfg.resource,
+    scope: 'metropolis-light' };
+  const response = await handler(new Request(issuer + '/oauth/authorize?' + new URLSearchParams(params)));
+  assert.equal(response.status, 200);
+  assert.match(await response.text(), /value="LIGHT"/);
+  const wrongCallback = await handler(new Request(issuer + '/oauth/authorize?' + new URLSearchParams({ ...params, redirect_uri: 'https://app.notion.com/other' })));
+  assert.deepEqual(await wrongCallback.json(), { code: 'OAUTH_INVALID_REDIRECT_URI' });
+});
