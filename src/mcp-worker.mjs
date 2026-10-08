@@ -4,6 +4,8 @@ import { createOAuthHandler, verifyAccessToken } from './mcp-oauth.mjs';
 import { SOURCE_SHA } from './mcp-source-identity.mjs';
 import { createFactoryStationRuntime } from './factory-station-runtime.mjs';
 import { createTabletRuntime } from './tablet-runtime.mjs';
+import { createObservatoryStation } from './observatory-station.mjs';
+import { inspectWorkPass } from './work-pass.mjs';
 
 export async function bufferRequest(request, { timeoutMs = 10000, maxBytes = 65536 } = {}) {
   if (!request.body) return request;
@@ -67,11 +69,11 @@ function configFor(env, storage) {
 }
 
 export function createGateway({ env, storage, sourceSha = SOURCE_SHA } = {}) {
-  let oauth, service, authenticateMcp, resourceMetadataUrl, configured = false;
+  let oauth, service, runtime, observatory, authenticateMcp, resourceMetadataUrl, grants, configured = false;
   try {
     if (!/^[a-f0-9]{40}$/.test(sourceSha)) throw new Error('SOURCE_UNKNOWN');
     const cfg = configFor(env, storage);
-    const grants = JSON.parse(env.MCP_WORK_GRANTS || '[]');
+    grants = JSON.parse(env.MCP_WORK_GRANTS || '[]');
     if (!Array.isArray(grants) || grants.some(g => !['GO', 'LIGHT'].includes(g.actor) || !['read', 'handoff', 'return', 'cancel', 'complete'].includes(g.action) || !g.workId || g.workId === '*')) throw new Error('EXPLICIT_WORK_GRANTS_REQUIRED');
     const factoryStation = createFactoryStationRuntime({
       baseUrl: env.FACTORY_RUNTIME_URL,
@@ -81,7 +83,7 @@ export function createGateway({ env, storage, sourceSha = SOURCE_SHA } = {}) {
       bucket: env.TABLET_STORAGE,
       sourceSha,
     });
-    const runtime = createCityRuntime({
+    runtime = createCityRuntime({
       sourceSha,
       store: {
         get: key => storage.get(key),
@@ -94,6 +96,7 @@ export function createGateway({ env, storage, sourceSha = SOURCE_SHA } = {}) {
       stationRuntimes: { FACTORY_STATION: factoryStation },
       tabletRuntime,
     });
+    observatory = createObservatoryStation({ env, storage, runtime });
     oauth = createOAuthHandler(cfg);
     resourceMetadataUrl = cfg.issuer + '/.well-known/oauth-protected-resource';
     authenticateMcp = async request => {
@@ -105,6 +108,7 @@ export function createGateway({ env, storage, sourceSha = SOURCE_SHA } = {}) {
       sourceSha,
       version: '1.0.0',
       grants,
+      observatoryObserve: input => observatory.observe(input),
       allowedOrigins: [cfg.issuer, 'https://chatgpt.com', ...JSON.parse(env.MCP_ALLOWED_ORIGINS || '[]')],
       authenticate: authenticateMcp,
     });
@@ -115,6 +119,56 @@ export function createGateway({ env, storage, sourceSha = SOURCE_SHA } = {}) {
     if (url.pathname === '/health') return json({ service: 'METROPOLIS_MCP', version: '1.0.0', sourceSha, status: configured ? 'READY' : 'NOT_CONFIGURED', persistentStorage: Boolean(storage), observedAt: new Date().toISOString(), ownerSystemsVerified: false }, configured ? 200 : 503);
     if (!configured) return json({ reason: 'METROPOLIS_MCP_NOT_CONFIGURED' }, 503);
     if (url.origin !== env.MCP_PUBLIC_ORIGIN) return json({ reason: 'ORIGIN_MISMATCH' }, 403);
+    if (url.pathname === '/observatory/pair') {
+      if (request.method !== 'POST') return json({ reason: 'METHOD_NOT_ALLOWED' }, 405);
+      let principal;
+      try {
+        principal = await authenticateMcp(request);
+      } catch {
+        return json(
+          { reason: 'AUTH_REQUIRED' },
+          401,
+          { 'www-authenticate': `Bearer resource_metadata="${resourceMetadataUrl}"` },
+        );
+      }
+      if (principal.actor !== 'GO') return json({ reason: 'GO_REQUIRED' }, 403);
+      if (!request.headers.get('content-type')?.startsWith('application/json')) {
+        return json({ reason: 'CONTENT_TYPE_REQUIRED' }, 415);
+      }
+      let body;
+      try {
+        const raw = await request.text();
+        if (new TextEncoder().encode(raw).length > 2048) return json({ reason: 'PAYLOAD_TOO_LARGE' }, 413);
+        body = JSON.parse(raw);
+      } catch {
+        return json({ reason: 'INVALID_ARGUMENT' }, 400);
+      }
+      if (!body || typeof body !== 'object' || Array.isArray(body)
+        || Object.keys(body).length !== 1 || typeof body.workId !== 'string' || !body.workId.trim()) {
+        return json({ reason: 'INVALID_ARGUMENT' }, 400);
+      }
+      const workId = body.workId.trim();
+      const work = await runtime.getWork(workId);
+      if (!work) return json({ reason: 'WORK_NOT_FOUND' }, 404);
+      if (work.ownerSystem !== 'OBSERVATORY') return json({ reason: 'WORK_OWNER_MISMATCH' }, 403);
+      const explicit = grants.filter(grant => grant.actor === principal.actor && grant.workId === workId);
+      const actions = explicit.length > 0
+        ? explicit.map(grant => grant.action)
+        : inspectWorkPass(work.workPass, {
+          actor: principal.actor,
+          workId: work.workId,
+          checkpointId: work.checkpointId,
+          workState: work.state,
+        }).actions;
+      if (!actions.includes('read')) return json({ reason: 'NO_GRANT' }, 403);
+      try {
+        return json(await observatory.pair({ actor: principal.actor, workId }));
+      } catch (error) {
+        const reasons = new Set(['WORK_NOT_FOUND', 'WORK_OWNER_MISMATCH', 'CHECKPOINT_MISMATCH', 'WORK_CLOSED']);
+        return json({ reason: reasons.has(error.message) ? error.message : 'OBSERVATORY_PAIR_FAILED' }, 400);
+      }
+    }
+    if (url.pathname.startsWith('/observatory/device/')) return observatory.fetch(request);
     if (url.pathname.startsWith('/oauth/') || url.pathname.startsWith('/.well-known/')) {
       // OAuth discovery and authorization endpoints are intentionally public.
       // Identity and authority are still enforced by PKCE, client validation,

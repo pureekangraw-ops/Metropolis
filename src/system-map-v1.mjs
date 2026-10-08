@@ -33,10 +33,12 @@ const nodes = [
   { id: 'PRISM_STATION', kind: NODE_KIND.STATION, parent: 'METROPOLIS' },
   { id: 'DRIVE_STATION', kind: NODE_KIND.STATION, parent: 'METROPOLIS' },
   { id: 'NOTION_STATION', kind: NODE_KIND.STATION, parent: 'METROPOLIS' },
+  { id: 'OBSERVATORY_STATION', kind: NODE_KIND.STATION, parent: 'METROPOLIS' },
   { id: 'FACTORY', kind: NODE_KIND.DESTINATION, parent: 'EXTERNAL_SYSTEM' },
   { id: 'PRISM', kind: NODE_KIND.DESTINATION, parent: 'EXTERNAL_SYSTEM' },
   { id: 'GOOGLE_DRIVE', kind: NODE_KIND.DESTINATION, parent: 'EXTERNAL_SYSTEM' },
   { id: 'NOTION', kind: NODE_KIND.DESTINATION, parent: 'EXTERNAL_SYSTEM' },
+  { id: 'OBSERVATORY', kind: NODE_KIND.DESTINATION, parent: 'EXTERNAL_SYSTEM' },
 ];
 
 const paths = [
@@ -52,6 +54,7 @@ const stations = [
   { stationId: 'PRISM_STATION', destinationId: 'PRISM', ownerSystem: 'PRISM' },
   { stationId: 'DRIVE_STATION', destinationId: 'GOOGLE_DRIVE', ownerSystem: 'GOOGLE_DRIVE' },
   { stationId: 'NOTION_STATION', destinationId: 'NOTION', ownerSystem: 'NOTION' },
+  { stationId: 'OBSERVATORY_STATION', destinationId: 'OBSERVATORY', ownerSystem: 'OBSERVATORY' },
 ];
 
 const rails = stations.map((station) => ({

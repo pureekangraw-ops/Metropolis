@@ -53,7 +53,13 @@ test('old room receives current schemas without creating another session', async
   const current = await arrive(service('release-two'));
   assert.notEqual(old.schemaHash, current.schemaHash);
   assert.equal(current.sourceSha, 'release-two');
-  assert.deepEqual(current.tools.map(t => t.name), ['metropolis_identity', 'metropolis_arrive', 'metropolis_reception', 'metropolis_work']);
+  assert.deepEqual(current.tools.map(t => t.name), [
+    'metropolis_identity',
+    'metropolis_arrive',
+    'metropolis_reception',
+    'metropolis_work',
+    'metropolis_observatory_observe',
+  ]);
   assert.equal(current.reception.intakeDesk.anchor, 'WORK_FLOW');
   assert.equal(current.reception.intakeDesk.securityVisibleAsNavigation, false);
   assert.equal(current.refresh.transportNotificationSupported, false);
@@ -63,11 +69,14 @@ test('tool descriptors expose strict action-discriminated input schemas', async 
   const listed = await (await rpc(service(), 'tools/list', {}, 'invalid')).json();
   const reception = listed.result.tools.find(tool => tool.name === 'metropolis_reception');
   const work = listed.result.tools.find(tool => tool.name === 'metropolis_work');
+  const observatory = listed.result.tools.find(tool => tool.name === 'metropolis_observatory_observe');
 
   assert.equal(reception.inputSchema.type, 'object');
   assert.equal(reception.inputSchema.oneOf.length, 8);
   assert.equal(work.inputSchema.type, 'object');
   assert.equal(work.inputSchema.oneOf.length, 5);
+  assert.deepEqual(observatory.inputSchema.required, ['workId', 'view']);
+  assert.equal(observatory.annotations.readOnlyHint, true);
 
   const review = reception.inputSchema.oneOf.find(schema => schema.properties.action.const === 'review');
   assert.deepEqual(review.required, ['action', 'draftId']);

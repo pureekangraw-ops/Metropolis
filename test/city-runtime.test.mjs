@@ -7,6 +7,7 @@ test('new city map contains the complete new-city surfaces', () => {
   const runtime = createCityRuntime({ sourceSha: 'a'.repeat(40) });
   assert.deepEqual(runtime.map.components, ['METROPOLIS', 'CITY_HALL', 'WORK_SYSTEM', 'POST_OFFICE', 'PIXIE_SERVICE', 'SHOP', 'SPECTRUMSALE', 'THE_TAILOR']);
   assert.equal(runtime.map.stations.includes('FACTORY_STATION'), true);
+  assert.equal(runtime.map.stations.includes('OBSERVATORY_STATION'), true);
 });
 
 test('Rail Link has exactly two Station endpoints and one trust boundary', () => {

@@ -41,6 +41,12 @@ const plannedStations = [
     status: STATION_PLAN_STATUS.READY_TO_BIND,
     cargoKinds: [CARGO_KIND.DATA, CARGO_KIND.ARTIFACT, CARGO_KIND.EVIDENCE], runtimeBinding: null,
   },
+  {
+    stationId: 'OBSERVATORY_STATION', destinationId: 'OBSERVATORY', ownerSystem: 'OBSERVATORY',
+    status: STATION_PLAN_STATUS.READY_TO_BIND,
+    cargoKinds: [CARGO_KIND.DATA, CARGO_KIND.EVIDENCE],
+    runtimeBinding: { kind: 'METROPOLIS_ENTRY', binding: 'METROPOLIS_ENTRY', path: '/observatory' },
+  },
 ];
 
 const FACTORY_RUNTIME_URL = 'https://factory-district.pureekangraw.workers.dev';

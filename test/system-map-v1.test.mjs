@@ -10,6 +10,18 @@ test('System Map v1 keeps Drive and Notion as separate Stations', () => {
   assert.equal(validateSystemMapV1(map).errors.some((error) => error.code === 'STATION_DUPLICATE'), true);
 });
 
+test('System Map v1 registers Observatory as a separate external Station and destination', () => {
+  const station = SYSTEM_MAP_V1.stations.find(item => item.stationId === 'OBSERVATORY_STATION');
+  assert.deepEqual(station, {
+    stationId: 'OBSERVATORY_STATION',
+    destinationId: 'OBSERVATORY',
+    ownerSystem: 'OBSERVATORY',
+  });
+  assert.equal(SYSTEM_MAP_V1.nodes.some(item => item.id === 'OBSERVATORY_STATION' && item.kind === 'STATION'), true);
+  assert.equal(SYSTEM_MAP_V1.nodes.some(item => item.id === 'OBSERVATORY' && item.kind === 'DESTINATION'), true);
+  assert.equal(SYSTEM_MAP_V1.rails.some(item => item.id === 'RAIL_OBSERVATORY'), true);
+});
+
 test('System Map v1 keeps Secretaries as attached capabilities, not runtimes', () => {
   const map = structuredClone(SYSTEM_MAP_V1);
   map.nodes.find((node) => node.id === 'MIMIR_SECRETARY').attachedTo = 'HERMES';
