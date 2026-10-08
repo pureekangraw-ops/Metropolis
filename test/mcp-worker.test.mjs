@@ -179,3 +179,22 @@ test('slow and oversized public bodies stop before the durable entry gate', asyn
   const small = new Request(origin + '/oauth/authorize', { method: 'POST', body: 'passcode=example' });
   assert.equal(await (await bufferRequest(small)).text(), 'passcode=example');
 });
+
+
+test('gateway accepts the full explicit Work action set used by LIGHT', async () => {
+  const fullGrantEnv = {
+    ...env,
+    MCP_WORK_GRANTS: JSON.stringify([
+      { actor: 'LIGHT', action: 'read', workId: 'W' },
+      { actor: 'LIGHT', action: 'handoff', workId: 'W', stationId: '*', operation: '*' },
+      { actor: 'LIGHT', action: 'return', workId: 'W' },
+      { actor: 'LIGHT', action: 'cancel', workId: 'W' },
+      { actor: 'LIGHT', action: 'complete', workId: 'W' },
+    ]),
+  };
+  const gateway = createGateway({ env: fullGrantEnv, storage: storage(), sourceSha: 'a'.repeat(40) });
+  const health = await gateway.fetch(new Request(origin + '/health'));
+  assert.equal(health.status, 200);
+  const body = await health.json();
+  assert.equal(body.status, 'READY');
+});
