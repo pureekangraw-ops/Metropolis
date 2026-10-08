@@ -67,6 +67,7 @@ export function createCityRuntime({ store = createMemoryStore(), clock = () => n
       checkpointId: cp,
       actor: text(workPassActor, 'workPassActor'),
       issuedAt: now,
+      handoffStations: owner === 'GOOGLE_DRIVE' ? ['DRIVE_STATION'] : ['FACTORY_STATION'],
     });
     const dataLifecycle = rotatePixieData([], {
       dataId: `${id}:DATA:COUNTER:1`,
