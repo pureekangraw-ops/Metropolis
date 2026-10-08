@@ -169,3 +169,23 @@ test('delegated mutation fails closed if owner audit storage cannot write the IN
   assert.equal(result.isError, true);
   assert.equal(result.structuredContent.reason, 'DELEGATION_AUDIT_REQUIRED');
 });
+
+test('owner-delegation cutover flag refuses old actor-only token without widening rights', async () => {
+  const gateway = createGateway({
+    env: { ...env, MCP_REQUIRE_OWNER_DELEGATION: '1' },
+    storage: storage(), sourceSha: 'a'.repeat(40),
+  });
+  const fresh = await gatewayCall(gateway, 'metropolis_identity', {});
+  assert.equal(fresh.isError, false);
+  assert.equal(fresh.structuredContent.delegatedAccess.owner, 'BIG');
+  const legacy = await createTestAccessToken({
+    issuer: origin, resource: origin + '/mcp', signingKey, clientId: 'go',
+    subject: 'GO', scope: 'metropolis-go',
+  });
+  const response = await gateway.fetch(new Request(origin + '/mcp', {
+    method: 'POST',
+    headers: { authorization: 'Bearer ' + legacy, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'metropolis_identity', arguments: {} } }),
+  }));
+  assert.equal(response.status, 401);
+});
