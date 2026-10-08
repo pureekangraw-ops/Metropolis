@@ -72,7 +72,7 @@ export function createGateway({ env, storage, sourceSha = SOURCE_SHA } = {}) {
     if (!/^[a-f0-9]{40}$/.test(sourceSha)) throw new Error('SOURCE_UNKNOWN');
     const cfg = configFor(env, storage);
     const grants = JSON.parse(env.MCP_WORK_GRANTS || '[]');
-    if (!Array.isArray(grants) || grants.some(g => !['GO', 'LIGHT'].includes(g.actor) || !['read', 'handoff', 'return'].includes(g.action) || !g.workId || g.workId === '*')) throw new Error('EXPLICIT_WORK_GRANTS_REQUIRED');
+    if (!Array.isArray(grants) || grants.some(g => !['GO', 'LIGHT'].includes(g.actor) || !['read', 'handoff', 'return', 'cancel', 'complete'].includes(g.action) || !g.workId || g.workId === '*')) throw new Error('EXPLICIT_WORK_GRANTS_REQUIRED');
     const factoryStation = createFactoryStationRuntime({
       baseUrl: env.FACTORY_RUNTIME_URL,
       sharedSecret: env.METROPOLIS_FACTORY_SHARED_SECRET,
