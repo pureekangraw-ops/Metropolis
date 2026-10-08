@@ -4,6 +4,8 @@ import { createOAuthHandler, verifyAccessToken } from './mcp-oauth.mjs';
 import { SOURCE_SHA } from './mcp-source-identity.mjs';
 import { createFactoryStationRuntime } from './factory-station-runtime.mjs';
 import { createTabletRuntime } from './tablet-runtime.mjs';
+import { createDriveStationRuntime } from './drive-station-runtime.mjs';
+import { stationPlanForRuntime } from './station-plan.mjs';
 import { createObservatoryStation } from './observatory-station.mjs';
 import { inspectWorkPass } from './work-pass.mjs';
 
@@ -69,7 +71,7 @@ function configFor(env, storage) {
 }
 
 export function createGateway({ env, storage, sourceSha = SOURCE_SHA } = {}) {
-  let oauth, service, runtime, observatory, authenticateMcp, resourceMetadataUrl, grants, configured = false;
+  let oauth, service, runtime, observatory, authenticateMcp, resourceMetadataUrl, grants, configured = false, driveConfigured = false;
   try {
     if (!/^[a-f0-9]{40}$/.test(sourceSha)) throw new Error('SOURCE_UNKNOWN');
     const cfg = configFor(env, storage);
@@ -83,6 +85,15 @@ export function createGateway({ env, storage, sourceSha = SOURCE_SHA } = {}) {
       bucket: env.TABLET_STORAGE,
       sourceSha,
     });
+    const driveStation = createDriveStationRuntime({
+      bucket: env.TABLET_STORAGE,
+      clientId: env.GOOGLE_CLIENT_ID,
+      clientSecret: env.GOOGLE_CLIENT_SECRET,
+      refreshToken: env.GOOGLE_REFRESH_TOKEN,
+      folderId: env.GOOGLE_DRIVE_ROOT_FOLDER_ID,
+      sourceSha,
+    });
+    driveConfigured = driveStation.configured;
     runtime = createCityRuntime({
       sourceSha,
       store: {
@@ -93,7 +104,7 @@ export function createGateway({ env, storage, sourceSha = SOURCE_SHA } = {}) {
           return [...rows.entries()].map(([key, value]) => ({ key, value }));
         },
       },
-      stationRuntimes: { FACTORY_STATION: factoryStation },
+      stationRuntimes: { FACTORY_STATION: factoryStation, DRIVE_STATION: driveStation },
       tabletRuntime,
     });
     observatory = createObservatoryStation({ env, storage, runtime });
@@ -116,7 +127,7 @@ export function createGateway({ env, storage, sourceSha = SOURCE_SHA } = {}) {
   } catch { /* Missing or invalid owner configuration fails closed. */ }
   return { async fetch(request) {
     const url = new URL(request.url);
-    if (url.pathname === '/health') return json({ service: 'METROPOLIS_MCP', version: '1.0.0', sourceSha, status: configured ? 'READY' : 'NOT_CONFIGURED', persistentStorage: Boolean(storage), observedAt: new Date().toISOString(), ownerSystemsVerified: false }, configured ? 200 : 503);
+    if (url.pathname === '/health') return json({ service: 'METROPOLIS_MCP', version: '1.0.0', sourceSha, status: configured ? 'READY' : 'NOT_CONFIGURED', persistentStorage: Boolean(storage), observedAt: new Date().toISOString(), ownerSystemsVerified: false, driveStation: driveConfigured ? 'BOUND_UNVERIFIED' : 'NOT_CONFIGURED', stationPlan: stationPlanForRuntime({ driveConfigured }) }, configured ? 200 : 503);
     if (!configured) return json({ reason: 'METROPOLIS_MCP_NOT_CONFIGURED' }, 503);
     if (url.origin !== env.MCP_PUBLIC_ORIGIN) return json({ reason: 'ORIGIN_MISMATCH' }, 403);
     if (url.pathname === '/observatory/pair') {
