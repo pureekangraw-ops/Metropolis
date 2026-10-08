@@ -101,6 +101,10 @@ export function createGateway({ env, storage, sourceSha = SOURCE_SHA } = {}) {
     resourceMetadataUrl = cfg.issuer + '/.well-known/oauth-protected-resource';
     authenticateMcp = async request => {
       const identity = await verifyAccessToken(request, { ...cfg, requireClientId: true, acceptedClientIds: cfg.clients.map(c => c.clientId) });
+      // Default to compatibility during migration; require renewed owner consent only at cutover.
+      if (String(env.MCP_REQUIRE_OWNER_DELEGATION || '') === '1' && identity.delegated !== true) {
+        throw new Error('OWNER_REAUTHORIZATION_REQUIRED');
+      }
       return { actor: identity.actor || identity.subject, owner: identity.owner || null, scope: identity.scope, delegated: identity.delegated === true };
     };
     service = createMetropolisMcp({
