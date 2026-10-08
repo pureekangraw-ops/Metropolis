@@ -191,6 +191,15 @@ function toolResult(data, isError = false, meta = null) {
 }
 const PROFILE_IDS = Object.freeze({ GO: 'prf_7b65c803a1184c26', LIGHT: 'prf_d25e4e4fa31a42bc' });
 const WORK_PASS_POLICY = 'PERSISTED_WORK_PASS_V1';
+function isMutatingCall(name, args) {
+  return (name === 'metropolis_reception' && !['search_work'].includes(args?.action))
+    || (name === 'metropolis_work' && args?.action !== 'read');
+}
+function delegationFor(principal) {
+  return principal?.delegated === true && principal.owner
+    ? { owner: principal.owner, actingAgent: principal.actor, authority: 'OWNER_DELEGATED' }
+    : null;
+}
 function explicitWorkGrants(grants, actor, workId) {
   return grants.filter(grant => grant.actor === actor && grant.workId === workId);
 }
@@ -228,6 +237,7 @@ export function createMetropolisMcp({
   version = '1.0.0',
   allowedOrigins = [],
   observatoryObserve,
+  appendDelegationAudit,
 } = {}) {
   if (!runtime || typeof authenticate !== 'function') throw new Error('RUNTIME_AUTHENTICATOR_REQUIRED');
   async function manifest(actor) {
@@ -483,7 +493,48 @@ export function createMetropolisMcp({
           { 'mcp/www_authenticate': [authChallenge(url)] },
         ));
       }
-      return reply(await call(body.params?.name, body.params?.arguments || {}, principal.actor));
+      const name = body.params?.name;
+      const args = body.params?.arguments || {};
+      const delegation = delegationFor(principal);
+      const governedMutation = delegation && isMutatingCall(name, args);
+      let eventId = null;
+      if (governedMutation) {
+        if (typeof appendDelegationAudit !== 'function') {
+          return reply(toolResult({ reason: 'DELEGATION_AUDIT_REQUIRED' }, true));
+        }
+        eventId = crypto.randomUUID();
+        try {
+          await appendDelegationAudit({
+            eventId, stage: 'INTENT', ...delegation,
+            tool: name, action: String(args.action || ''), workId: String(args.workId || ''),
+            draftId: String(args.draftId || ''), scope: principal.scope,
+          });
+        } catch {
+          return reply(toolResult({ reason: 'DELEGATION_AUDIT_REQUIRED' }, true));
+        }
+      }
+      const result = await call(name, args, principal.actor);
+      if (governedMutation) {
+        try {
+          await appendDelegationAudit({
+            eventId, stage: 'RESULT', ...delegation,
+            tool: name, action: String(args.action || ''), workId: String(args.workId || ''),
+            draftId: String(args.draftId || ''), scope: principal.scope,
+            status: result.isError ? 'ERROR' : 'OK',
+          });
+        } catch {
+          return reply(toolResult({ reason: 'DELEGATION_AUDIT_RECONCILIATION_REQUIRED', eventId, executed: true }, true));
+        }
+      }
+      if (delegation && result?.structuredContent && typeof result.structuredContent === 'object') {
+        const enriched = { ...result.structuredContent, delegatedAccess: delegation, ...(eventId ? { auditEventId: eventId } : {}) };
+        return reply({
+          ...result,
+          content: [{ type: 'text', text: JSON.stringify(enriched) }],
+          structuredContent: enriched,
+        });
+      }
+      return reply(result);
     }
 
     return json({ jsonrpc: '2.0', id: body.id, error: { code: -32601, message: 'Method not found' } });
