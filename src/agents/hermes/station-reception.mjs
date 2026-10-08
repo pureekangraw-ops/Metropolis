@@ -3,7 +3,7 @@ export const HERMES_STATION_ROLE = Object.freeze({
   id: 'HERMES',
   role: 'STATION_RECEPTION_AND_CONTINUITY',
   station: 'AGENT_ARRIVAL_STATION',
-  duties: Object.freeze(['WELCOME', 'TABLET_HANDOFF', 'TABLET_RECEIVE', 'LOST_AND_FOUND']),
+  duties: Object.freeze(['WELCOME', 'TABLET_HANDOFF', 'TABLET_RECEIVE', 'LOST_AND_FOUND', 'READ_WORK']),
   ownsWorkTruth: false,
   mayCreateWork: false,
   mayCreateAuthority: false,
