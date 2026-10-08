@@ -24,3 +24,19 @@ Run `scripts/live-factory-e2e.mjs` with the existing `LIVE_E2E_WORK_ID`,
 generate replacement Work identities. It verifies only boundary handoff,
 receipt persistence, and correlated readback; it does not prove domain work
 completed or that Metropolis is hosted as a service.
+
+
+## GO / LIGHT capability parity
+
+GO and LIGHT use separate authenticated identities and separate audit lineage, but
+identity separation does not reduce operational capability. Within an authorized
+Work, both actors may use HERMES Reception and receive the same persisted Work
+Pass actions: read, handoff, return, cancel and complete.
+
+Role differences are workflow responsibilities, not access tiers. LIGHT may carry
+implementation through the operational route; GO may review/audit/decide. Final
+irreversible gates such as merge, final release or final acceptance remain subject
+to the explicit GO/BIG review policy of the owning system.
+
+`SAME CAPABILITY != SAME ROLE`  
+`IDENTITY SEPARATION != CAPABILITY REDUCTION`
