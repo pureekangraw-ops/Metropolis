@@ -143,15 +143,44 @@ export function createCityRuntime({ store = createMemoryStore(), clock = () => n
     if(record.checkpointId!==text(checkpointId,'checkpointId')) throw new Error('CHECKPOINT_MISMATCH');
     if(record.online?.status!=='ONLINE') throw new Error('WORK_NOT_ONLINE');
     const station=text(stationId,'stationId'); const op=text(operation,'operation'); const stationRuntime=stations[station]; const now=clock();
+    // Stage inline cargo only inside the existing Work/Station boundary. Remove
+    // content before journaling Work, reports or receipts; retain only its R2 ref.
+    const routePayload=clone(payload);
+    if(stationRuntime?.stage && Object.hasOwn(routePayload,'content')){
+      const pass=record.workPass;
+      const staged=await stationRuntime.stage({
+        workId:id,checkpointId:record.checkpointId,actor,operation:op,
+        payload:{...routePayload,workPass:clone(pass),workPassRef:workPassRef(pass)},
+      });
+      routePayload.payloadRef=staged.payloadRef;
+      delete routePayload.content;
+    }
     const journey=createStationJourney({
       journeyId:`${id}:JOURNEY:${(record.journeys||[]).length+1}`,workId:id,checkpointId:record.checkpointId,stationId:station,
       destinationId:stationRuntime?.profile?.destinationId||record.ownerSystem||null,actor,branchProfile:stationRuntime?.profile||null,
-      baggage:{payloadRefs:payload.payloadRefs||payload.inputRefs||[],artifactRefs:payload.artifactRefs||[],evidenceRefs:payload.evidenceRefs||[],receiptRefs:payload.receiptRefs||[]},inAt:now,
+      baggage:{payloadRefs:routePayload.payloadRefs||routePayload.inputRefs||(routePayload.payloadRef?[routePayload.payloadRef]:[]),artifactRefs:routePayload.artifactRefs||[],evidenceRefs:routePayload.evidenceRefs||[],receiptRefs:routePayload.receiptRefs||[]},inAt:now,
     });
     const passRef=workPassRef(record.workPass);
-    const transportPayload={...clone(payload),journeyId:journey.journeyId,workPassRef:passRef,workPass:clone(record.workPass)};
+    const transportPayload={...routePayload,journeyId:journey.journeyId,workPassRef:passRef,workPass:clone(record.workPass)};
     const external=stationRuntime?.handoff?await stationRuntime.handoff({workId:id,checkpointId:record.checkpointId,stationId:station,operation:op,actor,payload:transportPayload}):null;
-    const handoff={handoffId:idFactory(),journeyId:journey.journeyId,actor:text(actor,'actor'),stationId:station,operation:op,payload:transportPayload,workPassRef:passRef,external:clone(external),createdAt:now};
+    // Post Office issues a delivery receipt only AFTER Drive provider readback.
+    // Postal delivery is not proof of CODE/VISUAL/LOGIC machine execution.
+    let postal=null;
+    if(station==='DRIVE_STATION'&&external?.storageVerified===true&&external?.verified===true){
+      const from=createPostOfficeBranch({branchId:'CENTRAL_POST_OFFICE',systemId:'METROPOLIS',role:'CENTRAL_OFFICE'});
+      const to=createPostOfficeBranch({branchId:'DRIVE_POST_OFFICE',systemId:'GOOGLE_DRIVE',role:'SUB_OFFICE'});
+      const mailbox=createMailbox({mailboxId:'DRIVE_INBOX',owner:'GOOGLE_DRIVE',receiver:'GOOGLE_DRIVE'});
+      const cargo=createCargoEnvelope({
+        dataId:`${id}:DRIVE:${record.checkpointId}:${(record.journeys||[]).length+1}`,
+        dataKind:transportPayload.dataKind,
+        payloadRef:transportPayload.payloadRef,
+        owner:record.ownerSystem,sender:'CENTRAL_POST_OFFICE',
+        receiver:'GOOGLE_DRIVE',mailbox:mailbox.mailboxId,
+        originBranch:from.branchId,destinationBranch:to.branchId,
+      });
+      postal=deliverBranchCargo(cargo,{originBranch:from,destinationBranch:to,mailbox,receiptId:idFactory(),observedAt:external.observedAt||now});
+    }
+    const handoff={handoffId:idFactory(),journeyId:journey.journeyId,actor:text(actor,'actor'),stationId:station,operation:op,payload:transportPayload,workPassRef:passRef,external:clone(external),postal:clone(postal),createdAt:now};
     let reports=[...(record.reports||[])]; let dataLifecycle=[...(record.dataLifecycle||[])];
     if(external){
       const reportId=`${id}:PIXIE:HANDOFF:${reports.length+1}`;
