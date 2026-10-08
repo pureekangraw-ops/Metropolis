@@ -23,7 +23,7 @@ export function createWorkPass({
   const id = required(workId, 'WORK_ID');
   const checkpoint = required(checkpointId, 'CHECKPOINT_ID');
   const holder = required(actor, 'ACTOR');
-  if (holder !== 'GO') throw new Error('WORK_PASS_ACTOR_NOT_ALLOWED');
+  if (!['GO', 'LIGHT'].includes(holder)) throw new Error('WORK_PASS_ACTOR_NOT_ALLOWED');
 
   return Object.freeze({
     kind: 'WORK_PASS',

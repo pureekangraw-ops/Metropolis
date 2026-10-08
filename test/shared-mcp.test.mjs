@@ -563,3 +563,75 @@ test('LIGHT may request COMPLETE while MIMIR remains the lifecycle actor', async
   assert.equal(reply.structuredContent.record.completion.requestedBy, 'LIGHT');
   assert.equal(reply.structuredContent.record.online.status, 'OFFLINE');
 });
+
+
+test('LIGHT has HERMES and persisted Work capability parity with GO while identity remains isolated', async () => {
+  const runtime = createCityRuntime({ store: createMemoryStore() });
+  const server = service('light-parity', runtime, []);
+
+  const input = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_reception',
+    arguments: {
+      action: 'input_information',
+      payload: {
+        information: { title: 'LIGHT parity work', summary: 'Full operational path' },
+        ownerSystem: 'FACTORY',
+      },
+    },
+  }, 'light')).json()).result;
+  assert.equal(input.isError, false);
+  assert.equal(input.structuredContent.actor, 'LIGHT');
+  const draftId = input.structuredContent.result.draftId;
+
+  const goCannotTakeLightDraft = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_reception',
+    arguments: { action: 'review', draftId, payload: {} },
+  }, 'go')).json()).result;
+  assert.equal(goCannotTakeLightDraft.isError, true);
+  assert.equal(goCannotTakeLightDraft.structuredContent.reason, 'DRAFT_ACTOR_MISMATCH');
+
+  const review = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_reception',
+    arguments: { action: 'review', draftId, payload: {} },
+  }, 'light')).json()).result;
+  assert.equal(review.isError, false);
+
+  const ready = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_reception',
+    arguments: { action: 'ready_to_create', draftId, payload: {} },
+  }, 'light')).json()).result;
+  assert.equal(ready.isError, false);
+
+  const created = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_reception',
+    arguments: { action: 'create_work', draftId, payload: {} },
+  }, 'light')).json()).result;
+  assert.equal(created.isError, false);
+  assert.equal(created.structuredContent.actor, 'LIGHT');
+  assert.equal(created.structuredContent.result.work.workPass.actor, 'LIGHT');
+  assert.deepEqual(
+    created.structuredContent.result.work.workPass.permissions.actions,
+    ['read', 'handoff', 'return', 'cancel', 'complete'],
+  );
+
+  const workId = created.structuredContent.result.workId;
+  const lightArrival = await arrive(server, 'light');
+  const lightPointer = lightArrival.current.works.find(work => work.workId === workId);
+  assert.ok(lightPointer);
+  assert.equal(lightPointer.accessSource, 'PERSISTED_WORK_PASS');
+  assert.deepEqual(lightPointer.authorizedActions, ['read', 'handoff', 'return', 'cancel', 'complete']);
+
+  const lightRead = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_work',
+    arguments: { action: 'read', workId },
+  }, 'light')).json()).result;
+  assert.equal(lightRead.isError, false);
+  assert.equal(lightRead.structuredContent.actor, 'LIGHT');
+
+  const goRead = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_work',
+    arguments: { action: 'read', workId },
+  }, 'go')).json()).result;
+  assert.equal(goRead.isError, true);
+  assert.equal(goRead.structuredContent.reason, 'NO_GRANT');
+});
