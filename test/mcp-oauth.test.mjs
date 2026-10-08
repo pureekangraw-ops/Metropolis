@@ -162,3 +162,72 @@ test('known Notion CIMD works without a runtime metadata fetch and pins its call
   const wrongCallback = await handler(new Request(issuer + '/oauth/authorize?' + new URLSearchParams({ ...params, redirect_uri: 'https://app.notion.com/other' })));
   assert.deepEqual(await wrongCallback.json(), { code: 'OAUTH_INVALID_REDIRECT_URI' });
 });
+
+test('Observatory native CIMD is pinned to GO and exchanges a GO-only token', async () => {
+  const cfg = { ...config(), allowCimd: true };
+  const handler = createOAuthHandler(cfg);
+  const clientId = `${issuer}/oauth/observatory-client.json`;
+  const redirectUri = `${issuer}/oauth/observatory-callback`;
+  const metadata = await handler(new Request(clientId));
+  assert.equal(metadata.status, 200);
+  assert.deepEqual(await metadata.json(), {
+    client_id: clientId,
+    redirect_uris: [redirectUri],
+    grant_types: ['authorization_code'],
+    response_types: ['code'],
+    token_endpoint_auth_method: 'none',
+    scope: 'metropolis-go',
+  });
+  const params = {
+    response_type: 'code',
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    code_challenge: challenge,
+    code_challenge_method: 'S256',
+    resource: cfg.resource,
+    scope: 'metropolis-go',
+    state: 'observatory-state',
+  };
+  const authorize = await handler(new Request(issuer + '/oauth/authorize?' + new URLSearchParams(params)));
+  assert.equal(authorize.status, 200);
+  assert.match(await authorize.text(), /Enter as <strong>GO<\/strong>/);
+  const wrongActor = await handler(new Request(issuer + '/oauth/authorize?' + new URLSearchParams({
+    ...params,
+    scope: 'metropolis-light',
+  })));
+  assert.equal(wrongActor.status, 400);
+
+  const consent = await handler(new Request(issuer + '/oauth/authorize', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ ...params, actor: 'GO', passcode: cfg.ownerPasscode }),
+  }));
+  assert.equal(consent.status, 302);
+  const callback = new URL(consent.headers.get('location'));
+  assert.equal(callback.origin + callback.pathname, redirectUri);
+  assert.equal(callback.searchParams.get('state'), 'observatory-state');
+  const exchange = await handler(new Request(issuer + '/oauth/token', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'authorization_code',
+      client_id: clientId,
+      code: callback.searchParams.get('code'),
+      code_verifier: verifier,
+      redirect_uri: redirectUri,
+      resource: cfg.resource,
+    }),
+  }));
+  assert.equal(exchange.status, 200);
+  const tokens = await exchange.json();
+  assert.equal(tokens.scope, 'metropolis-go');
+  assert.deepEqual(await verifyAccessToken(new Request(cfg.resource, {
+    headers: { authorization: 'Bearer ' + tokens.access_token },
+  }), { ...cfg, requireClientId: true }), { subject: 'GO', scope: 'metropolis-go' });
+
+  const wrongId = await handler(new Request(issuer + '/oauth/authorize?' + new URLSearchParams({
+    ...params,
+    client_id: 'https://evil.example/oauth/observatory-client.json',
+  })));
+  assert.equal(wrongId.status, 400);
+});

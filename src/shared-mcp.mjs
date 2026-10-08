@@ -24,6 +24,16 @@ const actionSchemas = {
   complete:{type:'object',properties:{},additionalProperties:false},
 };
 
+const observatoryObserveInputSchema = Object.freeze({
+  type: 'object',
+  properties: {
+    workId: string,
+    view: { type: 'string', enum: ['browser', 'map'] },
+  },
+  required: ['workId', 'view'],
+  additionalProperties: false,
+});
+
 const receptionActionSchemas = {
   input_information: {
     type: 'object',
@@ -129,6 +139,14 @@ const tools = [
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     securitySchemes: oauthSecurity,
   },
+  {
+    name: 'metropolis_observatory_observe',
+    title: 'Observe Observatory through Metropolis',
+    description: 'Read a fresh Observatory browser or map snapshot through the authorized Metropolis Station. Requires GO identity and READ on an OBSERVATORY Work. This is observation only; it does not execute commands or grant authority.',
+    inputSchema: observatoryObserveInputSchema,
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    securitySchemes: oauthSecurity,
+  },
 ];
 
 export function json(body, status = 200, extra = {}) {
@@ -202,7 +220,15 @@ function authChallenge(url) {
   return `Bearer resource_metadata="${url.origin}/.well-known/oauth-protected-resource/mcp", error="insufficient_scope", error_description="Link a GO or LIGHT Metropolis account to continue"`;
 }
 
-export function createMetropolisMcp({ runtime, authenticate, grants = [], sourceSha = 'UNKNOWN', version = '1.0.0', allowedOrigins = [] } = {}) {
+export function createMetropolisMcp({
+  runtime,
+  authenticate,
+  grants = [],
+  sourceSha = 'UNKNOWN',
+  version = '1.0.0',
+  allowedOrigins = [],
+  observatoryObserve,
+} = {}) {
   if (!runtime || typeof authenticate !== 'function') throw new Error('RUNTIME_AUTHENTICATOR_REQUIRED');
   async function manifest(actor) {
     const authorizedActions = grants.filter(g => g.actor === actor);
@@ -304,6 +330,55 @@ export function createMetropolisMcp({ runtime, authenticate, grants = [], source
       } catch (error) {
         const known = /^(.*_REQUIRED|DRAFT_[A-Z0-9_]+|READY_[A-Z0-9_]+|OWNER_SYSTEM_REQUIRED|INFORMATION_INVALID|INPUT_REFS_INVALID|SEARCH_QUERY_REQUIRED|WORK_NOT_FOUND|WORK_CANCELLED|WORK_CLOSED|WORK_CLOSURE_BELONGS_TO_MIMIR|CANCEL_[A-Z0-9_]+|INVALID_ARGUMENT|INVALID_PAYLOAD|ACTION_NOT_FOUND)$/;
         return toolResult({ reason: known.test(error.message) ? error.message : 'RECEPTION_OPERATION_FAILED' }, true);
+      }
+    }
+    if (name === 'metropolis_observatory_observe') {
+      try {
+        if (!schemaMatches(args, observatoryObserveInputSchema)) throw new Error('INVALID_ARGUMENT');
+        if (actor !== 'GO') throw new Error('GO_REQUIRED');
+        if (typeof observatoryObserve !== 'function') throw new Error('STATION_UNAVAILABLE');
+        const workId = required(args.workId, 'workId');
+        const view = required(args.view, 'view');
+        const work = await runtime.getWork(workId);
+        if (!work) throw new Error('WORK_NOT_FOUND');
+        if (work.ownerSystem !== 'OBSERVATORY') throw new Error('WORK_OWNER_MISMATCH');
+        const explicit = explicitWorkGrants(grants, actor, workId);
+        const allowedActions = explicit.length > 0
+          ? explicit.map(grant => grant.action)
+          : passActions(work, actor);
+        if (!allowedActions.includes('read')) throw new Error('NO_GRANT');
+        const stationResult = await observatoryObserve({
+          actor,
+          workId: work.workId,
+          checkpointId: work.checkpointId,
+          view,
+        });
+        if (stationResult?.readbackVerified !== true
+          || stationResult?.receipt?.status !== 'READBACK_VERIFIED'
+          || stationResult?.receipt?.stationId !== 'OBSERVATORY_STATION'
+          || stationResult?.receipt?.operation !== 'observe'
+          || stationResult?.receipt?.actor !== actor
+          || stationResult?.receipt?.workId !== work.workId
+          || stationResult?.receipt?.checkpointId !== work.checkpointId
+          || stationResult?.receipt?.view !== view
+          || stationResult?.receipt?.captureId !== stationResult?.snapshot?.captureId
+          || stationResult?.receipt?.snapshotHash !== await hash(JSON.stringify(stationResult?.snapshot))) {
+          throw new Error('STATION_READBACK_UNVERIFIED');
+        }
+        return toolResult({
+          actor,
+          workId: work.workId,
+          checkpointId: work.checkpointId,
+          stationResult,
+        });
+      } catch (error) {
+        const known = new Set([
+          'INVALID_ARGUMENT', 'GO_REQUIRED', 'STATION_UNAVAILABLE', 'WORK_NOT_FOUND',
+          'WORK_OWNER_MISMATCH', 'NO_GRANT', 'DEVICE_NOT_PAIRED', 'VIEW_INVALID',
+          'STALE_CAPTURE', 'READBACK_CONTEXT_MISMATCH', 'RECEIPT_READBACK_MISMATCH',
+          'STATION_READBACK_UNVERIFIED', 'WORK_CLOSED', 'CHECKPOINT_MISMATCH',
+        ]);
+        return toolResult({ reason: known.has(error.message) ? error.message : 'OBSERVATORY_READ_FAILED' }, true);
       }
     }
     if (name !== 'metropolis_work') return toolResult({ reason: 'TOOL_NOT_FOUND' }, true);

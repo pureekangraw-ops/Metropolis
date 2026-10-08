@@ -24,6 +24,30 @@ async function call(gateway, name, args, subject = 'GO') {
   const response = await gateway.fetch(new Request(origin + '/mcp', { method: 'POST', headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json', accept: 'application/json, text/event-stream' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }) }));
   return { response, body: await response.json() };
 }
+async function createObservatoryWork(gateway) {
+  const input = await call(gateway, 'metropolis_reception', {
+    action: 'input_information',
+    payload: { information: { title: 'Observatory read test' }, ownerSystem: 'OBSERVATORY' },
+  });
+  const draftId = input.body.result.structuredContent.result.draftId;
+  for (const action of ['review', 'ready_to_create']) {
+    const result = await call(gateway, 'metropolis_reception', { action, draftId, payload: {} });
+    assert.equal(result.body.result.isError, false);
+  }
+  const created = await call(gateway, 'metropolis_reception', { action: 'create_work', draftId, payload: {} });
+  assert.equal(created.body.result.isError, false);
+  return created.body.result.structuredContent.result;
+}
+function accessToken(subject = 'GO') {
+  return createTestAccessToken({
+    issuer: origin,
+    resource: origin + '/mcp',
+    signingKey: env.MCP_OAUTH_SIGNING_KEY,
+    subject,
+    scope: subject === 'GO' ? 'metropolis-go' : 'metropolis-light',
+    clientId: subject.toLowerCase(),
+  });
+}
 test('Work created by HERMES survives a fresh gateway on the same durable storage', async () => {
   const durable = storage();
   const first = createGateway({ env: { ...env, MCP_WORK_GRANTS: '[]' }, storage: durable, sourceSha: 'a'.repeat(40) });
@@ -135,6 +159,126 @@ test('health reports build identity without credentials', async () => {
   const raw = await response.text();
   assert.equal(JSON.parse(raw).sourceSha, 'a'.repeat(40));
   assert.equal(raw.includes('test-only'), false);
+});
+
+test('Observatory pairing requires authenticated GO and explicit existing READ Work', async () => {
+  const durable = storage();
+  const gateway = createGateway({ env: { ...env, MCP_WORK_GRANTS: '[]' }, storage: durable, sourceSha: 'a'.repeat(40) });
+  const work = await createObservatoryWork(gateway);
+  const unauthenticated = await gateway.fetch(new Request(origin + '/observatory/pair', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ workId: work.workId }),
+  }));
+  assert.equal(unauthenticated.status, 401);
+
+  const lightToken = await accessToken('LIGHT');
+  const light = await gateway.fetch(new Request(origin + '/observatory/pair', {
+    method: 'POST',
+    headers: { authorization: 'Bearer ' + lightToken, 'content-type': 'application/json' },
+    body: JSON.stringify({ workId: work.workId }),
+  }));
+  assert.equal(light.status, 403);
+  assert.equal((await light.json()).reason, 'GO_REQUIRED');
+
+  const goToken = await accessToken('GO');
+  const paired = await gateway.fetch(new Request(origin + '/observatory/pair', {
+    method: 'POST',
+    headers: { authorization: 'Bearer ' + goToken, 'content-type': 'application/json' },
+    body: JSON.stringify({ workId: work.workId }),
+  }));
+  assert.equal(paired.status, 200);
+  const config = await paired.json();
+  assert.equal(typeof config.token, 'string');
+  assert.equal(config.publishSnapshot, `${origin}/observatory/device/${config.deviceId}/snapshot`);
+
+  const noReadEnv = {
+    ...env,
+    MCP_WORK_GRANTS: JSON.stringify([{ actor: 'GO', action: 'handoff', workId: work.workId, stationId: '*', operation: '*' }]),
+  };
+  const noRead = createGateway({ env: noReadEnv, storage: durable, sourceSha: 'a'.repeat(40) });
+  const denied = await noRead.fetch(new Request(origin + '/observatory/pair', {
+    method: 'POST',
+    headers: { authorization: 'Bearer ' + goToken, 'content-type': 'application/json' },
+    body: JSON.stringify({ workId: work.workId }),
+  }));
+  assert.equal(denied.status, 403);
+  assert.equal((await denied.json()).reason, 'NO_GRANT');
+});
+
+test('Observatory station observation returns a readback receipt without changing Work lifecycle', async () => {
+  const durable = storage();
+  const gateway = createGateway({ env: { ...env, MCP_WORK_GRANTS: '[]' }, storage: durable, sourceSha: 'a'.repeat(40) });
+  const work = await createObservatoryWork(gateway);
+  const goToken = await accessToken('GO');
+  const paired = await gateway.fetch(new Request(origin + '/observatory/pair', {
+    method: 'POST',
+    headers: { authorization: 'Bearer ' + goToken, 'content-type': 'application/json' },
+    body: JSON.stringify({ workId: work.workId }),
+  }));
+  const config = await paired.json();
+  const now = Date.now();
+  const snapshot = {
+    schema: 'observer.snapshot.v1',
+    captureId: 'browser-capture-01',
+    revision: 1,
+    sequence: 1,
+    epoch: 1,
+    capturedAtEpochMs: now,
+    tabId: 'tab-01',
+    url: 'https://example.com/private?session=remove-me',
+    title: 'Example',
+    text: 'Useful page evidence',
+    targets: [],
+    truncated: false,
+  };
+  const published = await gateway.fetch(new Request(config.publishSnapshot, {
+    method: 'POST',
+    headers: { authorization: 'Bearer ' + config.token, 'content-type': 'application/json' },
+    body: JSON.stringify({ view: 'browser', snapshot }),
+  }));
+  assert.equal(published.status, 200);
+  assert.equal((await published.json()).accepted, true);
+
+  const observed = await call(gateway, 'metropolis_observatory_observe', {
+    workId: work.workId,
+    view: 'browser',
+  });
+  assert.equal(observed.body.result.isError, false);
+  const result = observed.body.result.structuredContent.stationResult;
+  assert.equal(result.stationId, 'OBSERVATORY_STATION');
+  assert.equal(result.readbackVerified, true);
+  assert.equal(result.receipt.status, 'READBACK_VERIFIED');
+  assert.equal(result.receipt.businessOutcome, 'UNKNOWN');
+  assert.equal(result.snapshot.url, 'https://example.com/private');
+  const read = await call(gateway, 'metropolis_work', { action: 'read', workId: work.workId });
+  assert.equal(read.body.result.structuredContent.record.state, 'RECEIVED');
+});
+
+test('Observatory observation rejects LIGHT, non-Observatory Work, and missing READ', async () => {
+  const durable = storage();
+  const gateway = createGateway({ env: { ...env, MCP_WORK_GRANTS: '[]' }, storage: durable, sourceSha: 'a'.repeat(40) });
+  const work = await createObservatoryWork(gateway);
+  const light = await call(gateway, 'metropolis_observatory_observe', { workId: work.workId, view: 'browser' }, 'LIGHT');
+  assert.equal(light.body.result.isError, true);
+  assert.equal(light.body.result.structuredContent.reason, 'GO_REQUIRED');
+
+  const restricted = createGateway({
+    env: { ...env, MCP_WORK_GRANTS: JSON.stringify([{ actor: 'GO', action: 'handoff', workId: work.workId, stationId: '*', operation: '*' }]) },
+    storage: durable,
+    sourceSha: 'a'.repeat(40),
+  });
+  const noRead = await call(restricted, 'metropolis_observatory_observe', { workId: work.workId, view: 'browser' });
+  assert.equal(noRead.body.result.isError, true);
+  assert.equal(noRead.body.result.structuredContent.reason, 'NO_GRANT');
+
+  const badArgs = await call(gateway, 'metropolis_observatory_observe', {
+    workId: work.workId,
+    view: 'browser',
+    stationId: 'CALLER_CONTROLLED',
+  });
+  assert.equal(badArgs.body.result.isError, true);
+  assert.equal(badArgs.body.result.structuredContent.reason, 'INVALID_ARGUMENT');
 });
 test('one registered client can connect before LIGHT onboarding', async () => {
   const goOnly = { ...env, MCP_OAUTH_CLIENTS: JSON.stringify(JSON.parse(env.MCP_OAUTH_CLIENTS).slice(0, 1)) };
