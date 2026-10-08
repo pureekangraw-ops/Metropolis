@@ -65,7 +65,7 @@ function configFor(env, storage) {
     async blocked(key, now) { return (await storage.get('oauth:attempt:' + key) || []).filter(t => now - t < 900).length >= 5; },
     async failure(key, now) { const id = 'oauth:attempt:' + key; const previous = await storage.get(id) || []; await storage.put(id, [...previous.filter(t => now - t < 900), now]); },
   };
-  return { issuer, resource: issuer + '/mcp', signingKey: env.MCP_OAUTH_SIGNING_KEY, ownerPasscode: env.MCP_OWNER_PASSCODE, clients: clients.map(c => ({ ...c, resources: [issuer + '/mcp'] })), allowCimd: true, ledger };
+  return { issuer, resource: issuer + '/mcp', signingKey: env.MCP_OAUTH_SIGNING_KEY, ownerPasscode: env.MCP_OWNER_PASSCODE, ownerId: String(env.MCP_OWNER_ID || 'BIG').trim(), clients: clients.map(c => ({ ...c, resources: [issuer + '/mcp'] })), allowCimd: true, ledger };
 }
 
 export function createGateway({ env, storage, sourceSha = SOURCE_SHA } = {}) {
@@ -101,7 +101,7 @@ export function createGateway({ env, storage, sourceSha = SOURCE_SHA } = {}) {
     resourceMetadataUrl = cfg.issuer + '/.well-known/oauth-protected-resource';
     authenticateMcp = async request => {
       const identity = await verifyAccessToken(request, { ...cfg, requireClientId: true, acceptedClientIds: cfg.clients.map(c => c.clientId) });
-      return { actor: identity.subject };
+      return { actor: identity.actor || identity.subject, owner: identity.owner || null, scope: identity.scope, delegated: identity.delegated === true };
     };
     service = createMetropolisMcp({
       runtime,
@@ -111,6 +111,13 @@ export function createGateway({ env, storage, sourceSha = SOURCE_SHA } = {}) {
       observatoryObserve: input => observatory.observe(input),
       allowedOrigins: [cfg.issuer, 'https://chatgpt.com', ...JSON.parse(env.MCP_ALLOWED_ORIGINS || '[]')],
       authenticate: authenticateMcp,
+      appendDelegationAudit: async event => {
+        if (!event?.eventId || !event?.stage || !event?.owner || !event?.actor) throw new Error('DELEGATION_AUDIT_INVALID');
+        // Durable Object storage is serialized by MetropolisEntry and keys never overwrite.
+        const key = 'delegation:audit:' + event.eventId + ':' + event.stage;
+        if (await storage.get(key)) throw new Error('DELEGATION_AUDIT_DUPLICATE');
+        await storage.put(key, { ...event, recordedAt: new Date().toISOString() });
+      },
     });
     configured = true;
   } catch { /* Missing or invalid owner configuration fails closed. */ }
