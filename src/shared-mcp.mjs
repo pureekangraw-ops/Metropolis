@@ -527,9 +527,11 @@ export function createMetropolisMcp({
         }
       }
       if (delegation && result?.structuredContent && typeof result.structuredContent === 'object') {
+        const enriched = { ...result.structuredContent, delegatedAccess: delegation, ...(eventId ? { auditEventId: eventId } : {}) };
         return reply({
           ...result,
-          structuredContent: { ...result.structuredContent, delegatedAccess: delegation, ...(eventId ? { auditEventId: eventId } : {}) },
+          content: [{ type: 'text', text: JSON.stringify(enriched) }],
+          structuredContent: enriched,
         });
       }
       return reply(result);
