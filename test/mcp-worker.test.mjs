@@ -135,6 +135,8 @@ test('health reports build identity without credentials', async () => {
   const raw = await response.text();
   assert.equal(JSON.parse(raw).sourceSha, 'a'.repeat(40));
   assert.equal(raw.includes('test-only'), false);
+  assert.equal(JSON.parse(raw).driveStation, 'NOT_CONFIGURED');
+  assert.equal(JSON.parse(raw).stationPlan.stations.find(s => s.stationId === 'DRIVE_STATION').runtimeBinding, null);
 });
 test('one registered client can connect before LIGHT onboarding', async () => {
   const goOnly = { ...env, MCP_OAUTH_CLIENTS: JSON.stringify(JSON.parse(env.MCP_OAUTH_CLIENTS).slice(0, 1)) };
@@ -197,4 +199,25 @@ test('gateway accepts the full explicit Work action set used by LIGHT', async ()
   assert.equal(health.status, 200);
   const body = await health.json();
   assert.equal(body.status, 'READY');
+});
+
+test('configured Drive credentials appear bound but never provider verified before readback', async () => {
+  const configuredEnv = {
+    ...env,
+    GOOGLE_CLIENT_ID: 'test-client',
+    GOOGLE_CLIENT_SECRET: 'test-client-secret',
+    GOOGLE_REFRESH_TOKEN: 'test-refresh-token',
+    GOOGLE_DRIVE_ROOT_FOLDER_ID: 'DRIVEFOLDER_000000001',
+    TABLET_STORAGE: { get: async () => null, put: async () => null },
+  };
+  const gateway = createGateway({ env: configuredEnv, storage: storage(), sourceSha: 'a'.repeat(40) });
+  const response = await gateway.fetch(new Request(origin + '/health'));
+  assert.equal(response.status, 200);
+  const health = await response.json();
+  assert.equal(health.driveStation, 'BOUND_UNVERIFIED');
+  const drive = health.stationPlan.stations.find(s => s.stationId === 'DRIVE_STATION');
+  assert.equal(drive.runtimeBinding.kind, 'GOOGLE_DRIVE_OAUTH');
+  assert.equal(drive.runtimeBinding.verified, false);
+  assert.equal(JSON.stringify(health).includes('test-client-secret'), false);
+  assert.equal(JSON.stringify(health).includes('test-refresh-token'), false);
 });
