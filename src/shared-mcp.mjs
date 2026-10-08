@@ -1,4 +1,5 @@
 import { createHermesReception } from './agents/hermes/station-reception.mjs';
+import { createHermesWorkReader } from './agents/hermes/work-reader.mjs';
 import { inspectWorkPass, workPassAllowsHandoff } from './work-pass.mjs';
 const ACTIONS = ['read','handoff','return','cancel','complete'];
 const RECEPTION_ACTIONS = ['input_information', 'review', 'ready_to_create', 'create_work', 'ready_to_resume', 'search_work', 'resume_work', 'cancel'];
@@ -23,6 +24,13 @@ const actionSchemas = {
   cancel:{type:'object',properties:{},additionalProperties:false},
   complete:{type:'object',properties:{},additionalProperties:false},
 };
+
+const hermesReadInputSchema = Object.freeze({
+  type: 'object',
+  properties: { workId: string },
+  required: ['workId'],
+  additionalProperties: false,
+});
 
 const observatoryObserveInputSchema = Object.freeze({
   type: 'object',
@@ -129,6 +137,14 @@ const tools = [
     description: 'Capture intake information as a Draft Tablet, review it, then CREATE a new Work ID or SEARCH and RESUME an existing Work. HERMES cancels Drafts only; Work CANCEL/COMPLETE belongs to MIMIR through metropolis_work.',
     inputSchema: receptionInputSchema,
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    securitySchemes: oauthSecurity,
+  },
+  {
+    name: 'metropolis_hermes_read',
+    title: 'Ask HERMES to Read Work',
+    description: 'Request a read-only existing Work record through HERMES. HERMES performs the retrieval under the authenticated GO/LIGHT Work Pass or explicit read grant; no Work state or authority is changed.',
+    inputSchema: hermesReadInputSchema,
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     securitySchemes: oauthSecurity,
   },
   {
@@ -240,6 +256,14 @@ export function createMetropolisMcp({
   appendDelegationAudit,
 } = {}) {
   if (!runtime || typeof authenticate !== 'function') throw new Error('RUNTIME_AUTHENTICATOR_REQUIRED');
+  const hermesReader = createHermesWorkReader({
+    getWork: workId => runtime.getWork(workId),
+    mayRead: ({ actor, record }) => {
+      const explicit = explicitWorkGrants(grants, actor, record.workId);
+      const actions = explicit.length > 0 ? explicit.map(grant => grant.action) : passActions(record, actor);
+      return actions.includes('read');
+    },
+  });
   async function manifest(actor) {
     const authorizedActions = grants.filter(g => g.actor === actor);
     const schemaHash = await hash(JSON.stringify({ tools, actionSchemas, receptionActionSchemas, version, sourceSha, actor, grants: authorizedActions, workPassPolicy: WORK_PASS_POLICY }));
@@ -306,6 +330,15 @@ export function createMetropolisMcp({
       return toolResult(profile);
     }
     if (name === 'metropolis_arrive') return toolResult(current);
+    if (name === 'metropolis_hermes_read') {
+      try {
+        if (!schemaMatches(args, hermesReadInputSchema)) throw new Error('INVALID_ARGUMENT');
+        return toolResult(await hermesReader.read({ actor, workId: args.workId }));
+      } catch (error) {
+        const allowed = new Set(['INVALID_ARGUMENT', 'WORK_ID_REQUIRED', 'ACTOR_REQUIRED', 'WORK_NOT_FOUND', 'NO_GRANT', 'READBACK_MISMATCH']);
+        return toolResult({ reason: allowed.has(error.message) ? error.message : 'HERMES_READ_FAILED' }, true);
+      }
+    }
     if (name === 'metropolis_reception') {
       try {
         const action = required(args.action, 'action');
@@ -400,6 +433,16 @@ export function createMetropolisMcp({
       if (!ACTIONS.includes(action)) throw new Error('ACTION_NOT_FOUND');
       if (!schemaMatches(args, workInputSchema)) throw new Error('INVALID_ARGUMENT');
       const payload = args.payload || {};
+      if (action === 'read') {
+        const result = await hermesReader.read({ actor, workId });
+        return toolResult({
+          actor, record: result.record,
+          handledBy: result.handledBy, receipt: result.receipt,
+          readbackVerified: result.readbackVerified,
+          ownerExecutionVerified: false,
+          workTruthChanged: false,
+        });
+      }
       const before = await runtime.getWork(workId);
       if (!before) throw new Error('WORK_NOT_FOUND');
       const explicit = explicitWorkGrants(grants, actor, workId);
@@ -408,8 +451,7 @@ export function createMetropolisMcp({
         : passActions(before, actor);
       if (!allowedActions.includes(action)) return toolResult({ reason: 'NO_GRANT' }, true);
       let record;
-      if (action === 'read') record = before;
-      else if (action === 'handoff') {
+      if (action === 'handoff') {
         if (!destinationAllowed(before, actor, explicit, payload)) throw new Error('DESTINATION_NOT_GRANTED');
         record = await runtime.handoff({ workId, checkpointId: before.checkpointId, actor, stationId: payload.stationId, operation: payload.operation, payload: payload.payload || {} });
       } else if (action === 'return') {
@@ -437,7 +479,7 @@ export function createMetropolisMcp({
           : false;
       return toolResult({ actor, record: readback, readbackVerified: true, ownerExecutionVerified });
     } catch (error) {
-      const known = /^(.*_REQUIRED|WORK_NOT_FOUND|WORK_ALREADY_EXISTS|WORK_NOT_ONLINE|WORK_CANCELLED|INVALID_ARGUMENT|INVALID_PAYLOAD|OWNER_NOT_GRANTED|DESTINATION_NOT_GRANTED|ACTION_NOT_FOUND|WRITE_READBACK_MISMATCH|FACTORY_[A-Z0-9_]+)$/;
+      const known = /^(.*_REQUIRED|WORK_NOT_FOUND|WORK_ALREADY_EXISTS|WORK_NOT_ONLINE|WORK_CANCELLED|READBACK_MISMATCH|INVALID_ARGUMENT|INVALID_PAYLOAD|OWNER_NOT_GRANTED|DESTINATION_NOT_GRANTED|ACTION_NOT_FOUND|WRITE_READBACK_MISMATCH|FACTORY_[A-Z0-9_]+)$/;
       return toolResult({ reason: known.test(error.message) ? error.message : 'WORK_OPERATION_FAILED' }, true);
     }
   }
