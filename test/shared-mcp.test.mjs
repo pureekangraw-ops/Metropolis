@@ -57,6 +57,7 @@ test('old room receives current schemas without creating another session', async
     'metropolis_identity',
     'metropolis_arrive',
     'metropolis_reception',
+    'metropolis_hermes_read',
     'metropolis_work',
     'metropolis_observatory_observe',
   ]);
