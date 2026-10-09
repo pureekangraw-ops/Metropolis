@@ -82,3 +82,53 @@ test('uncertain refresh fails closed without replaying a possibly consumed token
   assert.equal(calls, 1);
   assert.equal((await manager.status(request)).status, 'REAUTH_REQUIRED');
 });
+
+
+test('concurrent tool calls never redeem the same refresh token twice', async () => {
+  const durable = store();
+  let release;
+  let calls = 0;
+  const manager = createOutboundToolTokenManager({
+    store: durable, encryptionKey: key, now: () => 1000000000000,
+    providers: { service: { stationId: 'SERVICE_STATION',
+      tokenEndpoint: 'https://provider.example/oauth/token',
+      clientId: 'test-client', clientSecret: 'test-only-value' } },
+    authorize: async () => ({ allowed: true }),
+    fetchImpl: async () => {
+      calls++;
+      return new Promise(resolve => { release = () => resolve(Response.json({
+        access_token: 'next-access', refresh_token: 'next-refresh',
+        token_type: 'Bearer', expires_in: 3600,
+      })); });
+    },
+  });
+  await manager.provision(request, { accessToken: 'a', refreshToken: 'b', expiresAt: 1000000020000 });
+  const first = manager.getAccessToken(request);
+  for (let i = 0; i < 30 && !release; i++) await Promise.resolve();
+  assert.equal(typeof release, 'function');
+  await assert.rejects(manager.getAccessToken(request), /OUTBOUND_REFRESH_IN_PROGRESS/);
+  release();
+  assert.equal(await first, 'next-access');
+  assert.equal(calls, 1);
+  assert.equal(await manager.getAccessToken(request), 'next-access');
+});
+
+test('incorrect provider scope blocks rotation and requires reauthorization', async () => {
+  const durable = store();
+  const manager = createOutboundToolTokenManager({
+    store: durable, encryptionKey: key, now: () => 1000000000000,
+    providers: { service: { stationId: 'SERVICE_STATION',
+      tokenEndpoint: 'https://provider.example/oauth/token',
+      clientId: 'test-client', clientSecret: 'test-only-value' } },
+    authorize: async () => ({ allowed: true }),
+    fetchImpl: async () => Response.json({
+      access_token: 'widened-access', refresh_token: 'widened-refresh',
+      token_type: 'Bearer', expires_in: 3600, scope: 'admin',
+    }),
+  });
+  await manager.provision(request, {
+    accessToken: 'a', refreshToken: 'b', scope: 'read', expiresAt: 1000000020000,
+  });
+  await assert.rejects(manager.getAccessToken(request), /OUTBOUND_TOKEN_SCOPE_CHANGED/);
+  assert.equal((await manager.status(request)).status, 'REAUTH_REQUIRED');
+});
