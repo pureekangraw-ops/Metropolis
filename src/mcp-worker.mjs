@@ -64,6 +64,15 @@ function configFor(env, storage) {
     },
     async blocked(key, now) { return (await storage.get('oauth:attempt:' + key) || []).filter(t => now - t < 900).length >= 5; },
     async failure(key, now) { const id = 'oauth:attempt:' + key; const previous = await storage.get(id) || []; await storage.put(id, [...previous.filter(t => now - t < 900), now]); },
+    async refreshFamilyRevoked(familyId, now) {
+      const record = await storage.get('oauth:refresh:revoked:' + familyId);
+      return Boolean(record && record.expiresAt > now);
+    },
+    async revokeRefreshFamily(familyId, expiresAt) {
+      const key = 'oauth:refresh:revoked:' + familyId;
+      const record = await storage.get(key);
+      await storage.put(key, { expiresAt: Math.max(Number(record?.expiresAt || 0), expiresAt) });
+    },
   };
   return { issuer, resource: issuer + '/mcp', signingKey: env.MCP_OAUTH_SIGNING_KEY, ownerPasscode: env.MCP_OWNER_PASSCODE, ownerId: String(env.MCP_OWNER_ID || 'BIG').trim(), clients: clients.map(c => ({ ...c, resources: [issuer + '/mcp'] })), allowCimd: true, ledger };
 }

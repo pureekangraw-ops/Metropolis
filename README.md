@@ -56,3 +56,72 @@ through PIXIE/cargo paths.
 `SIGNAL != CONTEXT != CARGO`  
 `HERMES -> ONLINE`  
 `MIMIR -> OFFLINE`
+
+## Tool-to-tool travel and delegated operating authority (target contract)
+
+**Status: design contract; not a claim that every route is implemented or verified.**
+This section defines who may travel to a connected tool, who may operate it,
+and what evidence must come back. It does not assign ownership of domain truth
+to Metropolis.
+
+- **BIG / owner:** may connect and authorize tools and agents, delegate operating
+  authority, revoke access, and direct authorized lifecycle controls.
+- **GO / LIGHT / owner-authorized agents:** may discover, travel to, read from,
+  or command connected tools within BIG's explicit delegation and the owning
+  system's supported operations. Identity must be attributable to the real
+  initiating actor, including when acting on BIG's behalf.
+- **Metropolis / City Hall:** may initiate authenticated outbound tool calls,
+  accept authenticated inbound agent connections, route commands, fetch
+  authorized results, and correlate receipts/readbacks. It must authorize
+  the operation **before dispatch**, not merely authorize a connection.
+- **Resident tool agents:** may receive validated commands and return status,
+  evidence, artifacts and incidents; may initiate authenticated callbacks
+  or incident reporting. A connection or callback is not a grant of new authority.
+
+### Route != capability != authority
+
+Each participating app declares: (1) supported inbound/outbound routes,
+(2) capabilities and owner-of-truth boundaries, (3) accepted delegated
+authority, (4) request/response/error contract, (5) lifecycle and recovery,
+and (6) audit/readback. Read, observe, execute, pause, resume, cancel,
+return and complete are distinct operations; availability is not permission.
+
+The city's central gate validates **actor identity + BIG delegation +
+target tool + operation + Work/Checkpoint context** before dispatch.
+The destination authenticates the city/agent, verifies command integrity,
+contract support and operational safety; it must not invent a second
+independent user-authorization policy for the same grant. Existing
+owner-specific irreversible approval gates remain in force.
+
+Metropolis may use provider-supported OAuth, service credentials and
+refresh-token rotation where legitimately issued to Metropolis; keep
+credentials server-side, never forward raw credentials in Work,
+receipts or logs, and never reuse ChatGPT session tokens.
+Expired/revoked credentials fail closed and require reauthorization if
+refresh is not available. Browser-based authorization may bootstrap a
+connection but is not a substitute for machine-to-machine execution.
+
+All attempts, **including reads, denied operations, outbound dispatch,
+callbacks, token refresh outcomes and readback**, must be auditable with
+actor, BIG delegation, target, operation, timestamp, Work/Checkpoint
+correlation and outcome. Redact secrets. A request accepted for dispatch
+is not evidence that the owning tool executed it or that the Work is done.
+
+Lifecycle requests must follow the owning system's supported safe
+checkpoint semantics. PAUSE holds recoverable state; RESUME continues;
+CANCEL returns available state/artifacts and reports incomplete returns
+explicitly. Preserve ownership, evidence and lineage:
+`REQUESTED != ACCEPTED != EXECUTED != VERIFIED != DONE`.
+
+Tool-to-tool processing should continue in the responsible backend or
+resident agent after an authorized request is accepted, independently
+of the initiating chat session. Do not add duplicate permission switches,
+new shadow owners or unnecessary per-operation login screens.
+
+### Verification still required
+
+- Prove outbound city identity and an authorized tool invocation end-to-end.
+- Prove refresh/rotation, expiry, revocation and audit without leaking tokens.
+- Prove inbound callback, correlation, durable readback and failure recovery.
+- Prove Observatory mobile pairing separately; a readable station is not a
+  paired mobile browser, and read-only observation is not browser control.

@@ -9,7 +9,7 @@ const verifier = 'v'.repeat(64);
 const challenge = Buffer.from(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier))).toString('base64url');
 
 function config() {
-  const consumed = new Set();
+  const consumed = new Set(), revoked = new Set();
   const failures = new Map();
   return {
     issuer,
@@ -41,6 +41,8 @@ function config() {
       async failure(key, now) {
         failures.set(key, [...(failures.get(key) || []), now]);
       },
+      async refreshFamilyRevoked(id) { return revoked.has(id); },
+      async revokeRefreshFamily(id) { revoked.add(id); },
     },
   };
 }
