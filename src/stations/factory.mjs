@@ -63,6 +63,37 @@ export function createFactoryRailAdapter({
     };
   }
 
+  async function preflight({ transport }) {
+    const payload = transport?.payload || {};
+    const bodyText = JSON.stringify(payload);
+    const response = await fetchImpl(`${origin}/station/preflight`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...await signedHeaders(bodyText) },
+      body: bodyText,
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok || body.allowed !== true) {
+      const code = typeof body.reason === 'string' && /^[A-Z][A-Z0-9_]{0,127}$/.test(body.reason)
+        ? body.reason : 'FACTORY_PREFLIGHT_UNAVAILABLE';
+      throw Object.assign(new Error(code), { stage: 'AUTH', code });
+    }
+    if (!payload.workId || body.workId !== payload.workId
+      || !payload.checkpointId || body.checkpointId !== payload.checkpointId
+      || !payload.workPassRef || body.workPassRef !== payload.workPassRef
+      || !payload.actingActor || body.actingActor !== payload.actingActor
+      || !payload.operation || body.operation !== payload.operation
+      || !payload.expectedSourceSha || body.sourceSha !== payload.expectedSourceSha
+      || body.validationScope !== 'FACTORY_BOUNDARY_PREFLIGHT') {
+      throw Object.assign(new Error('FACTORY_PREFLIGHT_CORRELATION_FAILED'), {
+        stage: 'AUTH', code: 'FACTORY_PREFLIGHT_CORRELATION_FAILED',
+      });
+    }
+    return Object.freeze({
+      allowed: true, validationScope: body.validationScope,
+      observedAt: body.observedAt || now(),
+    });
+  }
+
   async function dispatch({ transport }) {
     const bodyText = JSON.stringify(transport.payload || {});
     const response = await fetchImpl(`${origin}/station/receive`, {
@@ -118,5 +149,5 @@ export function createFactoryRailAdapter({
     };
   }
 
-  return Object.freeze({ profile: FACTORY_BRANCH_PROFILE, probe, dispatch, readback });
+  return Object.freeze({ profile: FACTORY_BRANCH_PROFILE, probe, preflight, dispatch, readback });
 }
