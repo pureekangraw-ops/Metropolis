@@ -148,7 +148,7 @@ export function createCityRuntime({ store = createMemoryStore(), clock = () => n
     return clone(next);
   }
 
-  async function handoff({workId,checkpointId,stationId,operation,actor='HERMES',payload={}}={}) {
+  async function handoff({workId,checkpointId,stationId,operation,actor='HERMES',payload={},cityAuthorization=null}={}) {
     const id=text(workId,'workId'); const record=await store.get(`work:${id}`);
     if(!record) throw new Error('WORK_NOT_FOUND');
     if(record.checkpointId!==text(checkpointId,'checkpointId')) throw new Error('CHECKPOINT_MISMATCH');
@@ -160,7 +160,10 @@ export function createCityRuntime({ store = createMemoryStore(), clock = () => n
       baggage:{payloadRefs:payload.payloadRefs||payload.inputRefs||[],artifactRefs:payload.artifactRefs||[],evidenceRefs:payload.evidenceRefs||[],receiptRefs:payload.receiptRefs||[]},inAt:now,
     });
     const passRef=workPassRef(record.workPass);
-    const transportPayload={...clone(payload),journeyId:journey.journeyId,workPassRef:passRef,workPass:clone(record.workPass)};
+    // These claims are stamped after the authenticated MCP permission check.
+    // Override caller payload to prevent a client from spoofing actor/grants.
+    const transportPayload={...clone(payload),journeyId:journey.journeyId,workPassRef:passRef,workPass:clone(record.workPass),
+      actingActor:text(actor,'actor'),operation:op,...(cityAuthorization?{cityAuthorization:clone(cityAuthorization)}:{cityAuthorization:null})};
     const external=stationRuntime?.handoff?await stationRuntime.handoff({workId:id,checkpointId:record.checkpointId,stationId:station,operation:op,actor,payload:transportPayload}):null;
     const handoff={handoffId:idFactory(),journeyId:journey.journeyId,actor:text(actor,'actor'),stationId:station,operation:op,payload:transportPayload,workPassRef:passRef,external:clone(external),createdAt:now};
     let reports=[...(record.reports||[])]; let dataLifecycle=[...(record.dataLifecycle||[])];
