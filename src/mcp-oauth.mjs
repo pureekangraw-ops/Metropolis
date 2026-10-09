@@ -99,15 +99,26 @@ function clientById(config, clientId) {
   return oauthClients(config).find(client => client.clientId === String(clientId || ''));
 }
 
-function actorIdentity(actor) {
+// An actor outside GO/LIGHT exists only when a server-configured client
+// registers that name and its exact scope. User-supplied names never register.
+function actorScopes(config = {}) {
+  const scopes = { ...ACTOR_SCOPES };
+  for (const client of oauthClients(config)) {
+    if (/^[A-Z][A-Z0-9_-]{0,63}$/.test(client.subject)
+      && client.scope === 'metropolis-' + client.subject.toLowerCase()) {
+      scopes[client.subject] = client.scope;
+    }
+  }
+  return scopes;
+}
+function actorIdentity(actor, config = {}) {
   const subject = String(actor || '').trim().toUpperCase();
-  const scope = ACTOR_SCOPES[subject];
+  const scope = actorScopes(config)[subject];
   return scope ? { subject, scope } : null;
 }
-
-function identityFromRequestedScope(scope) {
+function identityFromRequestedScope(scope, config = {}) {
   const requested = new Set(String(scope || '').split(/\s+/).map(value => value.trim()).filter(Boolean));
-  const matches = Object.entries(ACTOR_SCOPES).filter(([, actorScope]) => requested.has(actorScope));
+  const matches = Object.entries(actorScopes(config)).filter(([, actorScope]) => requested.has(actorScope));
   return matches.length === 1 ? { subject: matches[0][0], scope: matches[0][1] } : null;
 }
 
@@ -244,16 +255,16 @@ function clientAllowsTokenIdentity(client, payload, config) {
   const delegated = Object.hasOwn(payload, 'act');
   if (delegated) {
     const ownerId = String(config.ownerId || '').trim();
-    if (!ownerId || payload.sub !== ownerId || actorIdentity(payload.act)?.scope !== payload.scope) return false;
+    if (!ownerId || payload.sub !== ownerId || actorIdentity(payload.act, config)?.scope !== payload.scope) return false;
   }
-  return clientAllowsIdentity(client, delegated ? payload.act : payload.sub, payload.scope);
+  return clientAllowsIdentity(client, delegated ? payload.act : payload.sub, payload.scope, config);
 }
 
-function clientAllowsIdentity(client, subject, scope) {
+function clientAllowsIdentity(client, subject, scope, config = {}) {
   if (client?.kind === 'CIMD') {
     return client.fixedIdentity
       ? client.fixedIdentity.subject === subject && client.fixedIdentity.scope === scope
-      : actorIdentity(subject)?.scope === scope;
+      : actorIdentity(subject, config)?.scope === scope;
   }
   return client?.subject === subject && client?.scope === scope;
 }
@@ -271,9 +282,9 @@ async function validateAuthorize(input, config) {
   const requestedScope = String(input.get('scope') || '');
   const fixedIdentity = client.fixedIdentity || (client.kind === 'REGISTERED'
     ? { subject: client.subject, scope: client.scope }
-    : identityFromRequestedScope(requestedScope));
+    : identityFromRequestedScope(requestedScope, config));
   if (client.kind === 'REGISTERED' || client.fixedIdentity) {
-    const requestedActor = identityFromRequestedScope(requestedScope);
+    const requestedActor = identityFromRequestedScope(requestedScope, config);
     if (requestedActor && requestedActor.subject !== fixedIdentity.subject) throw new Error('scope identity mismatch');
   }
   return {
@@ -354,7 +365,7 @@ export async function verifyAccessToken(request, config = {}) {
   if (payload.type !== 'access' || payload.iss !== config.issuer || payload.aud !== expectedResource || !Number.isFinite(payload.exp) || payload.exp <= current) {
     throw new Error('invalid access token');
   }
-  if (Object.hasOwn(payload, 'act') && (!String(config.ownerId || '').trim() || payload.sub !== config.ownerId || actorIdentity(payload.act)?.scope !== payload.scope)) throw new Error('invalid delegated identity');
+  if (Object.hasOwn(payload, 'act') && (!String(config.ownerId || '').trim() || payload.sub !== config.ownerId || actorIdentity(payload.act, config)?.scope !== payload.scope)) throw new Error('invalid delegated identity');
   const clientId = String(payload.client_id || '').trim();
   if (config.requireClientId === true && !clientId) throw new Error('invalid access token');
   const registered = oauthClients(config).find(client => client.clientId === clientId);
@@ -363,7 +374,7 @@ export async function verifyAccessToken(request, config = {}) {
     && validCimdClientId(clientId, config)
     && (knownCimd?.fixedIdentity
       ? clientAllowsTokenIdentity(knownCimd, payload, config)
-      : actorIdentity(Object.hasOwn(payload, 'act') ? payload.act : payload.sub)?.scope === payload.scope);
+      : actorIdentity(Object.hasOwn(payload, 'act') ? payload.act : payload.sub, config)?.scope === payload.scope);
   if (registered) {
     if (!clientAllowsTokenIdentity(registered, payload, config)) throw new Error('client identity mismatch');
   } else if (!cimdAllowed) {
