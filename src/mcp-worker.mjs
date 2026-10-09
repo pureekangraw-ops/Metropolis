@@ -33,14 +33,14 @@ function registeredClientsFrom(env = {}) {
   for (const raw of sources) {
     let clients;
     try { clients = JSON.parse(raw); } catch { continue; }
-    if (!Array.isArray(clients) || clients.length > 2) continue;
+    if (!Array.isArray(clients) || clients.length > 32) continue;
     if (clients.length === 0) return [];
     const uniqueSubjects = new Set(clients.map(c => c?.subject));
     const uniqueClientIds = new Set(clients.map(c => c?.clientId));
     const valid = uniqueSubjects.size === clients.length
       && uniqueClientIds.size === clients.length
       && clients.every(c => (
-        ['GO', 'LIGHT'].includes(c?.subject)
+        typeof c?.subject === 'string' && /^[A-Z][A-Z0-9_-]{0,63}$/.test(c.subject)
         && c.scope === 'metropolis-' + c.subject.toLowerCase()
         && c.clientId
         && c.clientSecret
@@ -82,8 +82,10 @@ export function createGateway({ env, storage, sourceSha = SOURCE_SHA } = {}) {
   try {
     if (!/^[a-f0-9]{40}$/.test(sourceSha)) throw new Error('SOURCE_UNKNOWN');
     const cfg = configFor(env, storage);
+    // Beyond GO/LIGHT, actors must be registered server-side first.
+    const allowedActors = new Set(['GO', 'LIGHT', ...cfg.clients.map(c => c.subject)]);
     grants = JSON.parse(env.MCP_WORK_GRANTS || '[]');
-    if (!Array.isArray(grants) || grants.some(g => !['GO', 'LIGHT'].includes(g.actor) || !['read', 'handoff', 'return', 'cancel', 'complete'].includes(g.action) || !g.workId || g.workId === '*')) throw new Error('EXPLICIT_WORK_GRANTS_REQUIRED');
+    if (!Array.isArray(grants) || grants.some(g => !allowedActors.has(g.actor) || !['read', 'handoff', 'return', 'cancel', 'complete'].includes(g.action) || !g.workId || g.workId === '*')) throw new Error('EXPLICIT_WORK_GRANTS_REQUIRED');
     const factoryStation = createFactoryStationRuntime({
       baseUrl: env.FACTORY_RUNTIME_URL,
       sharedSecret: env.METROPOLIS_FACTORY_SHARED_SECRET,
@@ -121,6 +123,7 @@ export function createGateway({ env, storage, sourceSha = SOURCE_SHA } = {}) {
       sourceSha,
       version: '1.0.0',
       grants,
+      allowedActors: [...allowedActors],
       observatoryObserve: input => observatory.observe(input),
       allowedOrigins: [cfg.issuer, 'https://chatgpt.com', ...JSON.parse(env.MCP_ALLOWED_ORIGINS || '[]')],
       authenticate: authenticateMcp,

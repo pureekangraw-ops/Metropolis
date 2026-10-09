@@ -242,13 +242,14 @@ function destinationAllowed(record, actor, explicit, payload = {}) {
   });
 }
 function authChallenge(url) {
-  return `Bearer resource_metadata="${url.origin}/.well-known/oauth-protected-resource/mcp", error="insufficient_scope", error_description="Link a GO or LIGHT Metropolis account to continue"`;
+  return `Bearer resource_metadata="${url.origin}/.well-known/oauth-protected-resource/mcp", error="insufficient_scope", error_description="Link an authorized Metropolis actor account to continue"`;
 }
 
 export function createMetropolisMcp({
   runtime,
   authenticate,
   grants = [],
+  allowedActors = ['GO', 'LIGHT'],
   sourceSha = 'UNKNOWN',
   version = '1.0.0',
   allowedOrigins = [],
@@ -256,6 +257,7 @@ export function createMetropolisMcp({
   appendDelegationAudit,
 } = {}) {
   if (!runtime || typeof authenticate !== 'function') throw new Error('RUNTIME_AUTHENTICATOR_REQUIRED');
+  const actorAllowlist = new Set(allowedActors.filter(actor => /^[A-Z][A-Z0-9_-]{0,63}$/.test(actor)));
   const hermesReader = createHermesWorkReader({
     getWork: workId => runtime.getWork(workId),
     mayRead: ({ actor, record }) => {
@@ -326,7 +328,7 @@ export function createMetropolisMcp({
   async function call(name, args, actor) {
     const current = await manifest(actor);
     if (name === 'metropolis_identity') {
-      const profile = { id: PROFILE_IDS[actor], name: actor, nickname: `${actor} — Metropolis` };
+      const profile = { id: PROFILE_IDS[actor] || 'prf_' + (await hash('metropolis-profile:' + actor)).slice(0,16), name: actor, nickname: `${actor} — Metropolis` };
       return toolResult(profile);
     }
     if (name === 'metropolis_arrive') return toolResult(current);
@@ -530,7 +532,7 @@ export function createMetropolisMcp({
         protocolVersion: body.params.protocolVersion,
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: 'metropolis', version },
-        instructions: 'List tools, link a GO or LIGHT Metropolis account, then call metropolis_arrive. New work starts at HERMES Reception as INPUT INFORMATION → DRAFT → REVIEW → READY TO CREATE → CREATE WORK. Resume uses READY TO RESUME → SEARCH WORK → RESUME WORK. Work IDs are created by City Hall, not by callers.',
+        instructions: 'List tools, link an authorized Metropolis actor account, then call metropolis_arrive. New work starts at HERMES Reception as INPUT INFORMATION → DRAFT → REVIEW → READY TO CREATE → CREATE WORK. Resume uses READY TO RESUME → SEARCH WORK → RESUME WORK. Work IDs are created by City Hall, not by callers.',
       });
     }
     if (body.method === 'ping') return reply({});
@@ -539,7 +541,7 @@ export function createMetropolisMcp({
     if (body.method === 'tools/call') {
       let principal;
       try { principal = await authenticate(request); } catch { /* tool-level auth challenge below */ }
-      if (!['GO', 'LIGHT'].includes(principal?.actor)) {
+      if (!actorAllowlist.has(principal?.actor)) {
         return reply(toolResult(
           { reason: 'AUTH_REQUIRED' },
           true,

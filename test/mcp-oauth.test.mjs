@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createOAuthHandler, createTestAuthorizationCode, createTestRefreshToken, verifyAccessToken } from '../src/mcp-oauth.mjs';
+import { createOAuthHandler, createTestAccessToken, createTestAuthorizationCode, createTestRefreshToken, verifyAccessToken } from '../src/mcp-oauth.mjs';
 const issuer = 'https://city.example';
 const verifier = 'v'.repeat(64);
 const challenge = Buffer.from(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier))).toString('base64url');
@@ -56,6 +56,70 @@ function config() {
     ledger: { async consume(key) { if (consumed.has(key)) return false; consumed.add(key); return true; }, async blocked(key, now) { return (failures.get(key) || []).filter(t => now - t < 900).length >= 5; }, async failure(key, now) { failures.set(key, [...(failures.get(key) || []), now]); }, async refreshFamilyRevoked(id) { return revoked.has(id); }, async revokeRefreshFamily(id) { revoked.add(id); } } };
 }
 function token(form) { return new Request(issuer + '/oauth/token', { method: 'POST', headers: { authorization: 'Basic ' + btoa('go:test-only-secret'), 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(form) }); }
+
+test('owner-registered additional actor keeps its identity and scope across refresh', async () => {
+  const cfg = {
+    ...config(), ownerId: 'BIG',
+    clients: [{
+      clientId: 'oracle-client', clientSecret: 'oracle-test-secret',
+      subject: 'ORACLE', scope: 'metropolis-oracle',
+      redirectUris: ['https://oracle.example/callback'],
+      resources: [issuer + '/mcp'],
+    }],
+  };
+  const handler = createOAuthHandler(cfg);
+  const code = await createTestAuthorizationCode({
+    ...cfg, clientId: 'oracle-client', subject: 'BIG',
+    actor: 'ORACLE', scope: 'metropolis-oracle',
+    redirectUri: 'https://oracle.example/callback',
+    codeChallenge: challenge,
+  });
+  const exchange = await handler(new Request(issuer + '/oauth/token', {
+    method: 'POST',
+    headers: {
+      authorization: 'Basic ' + btoa('oracle-client:oracle-test-secret'),
+      'content-type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({
+      grant_type: 'authorization_code', client_id: 'oracle-client',
+      code, code_verifier: verifier, redirect_uri: 'https://oracle.example/callback',
+      resource: cfg.resource,
+    }),
+  }));
+  assert.equal(exchange.status, 200);
+  const tokens = await exchange.json();
+  assert.equal(tokens.scope, 'metropolis-oracle');
+  const verify = tokenValue => verifyAccessToken(
+    new Request(cfg.resource, { headers: { authorization: 'Bearer ' + tokenValue } }),
+    { ...cfg, requireClientId: true },
+  );
+  const identity = {
+    subject: 'BIG', owner: 'BIG', actor: 'ORACLE',
+    scope: 'metropolis-oracle', delegated: true,
+  };
+  assert.deepEqual(await verify(tokens.access_token), identity);
+  const refresh = await handler(new Request(issuer + '/oauth/token', {
+    method: 'POST',
+    headers: { authorization: 'Basic ' + btoa('oracle-client:oracle-test-secret') },
+    body: new URLSearchParams({
+      grant_type: 'refresh_token',
+      client_id: 'oracle-client',
+      refresh_token: tokens.refresh_token,
+      resource: cfg.resource,
+    }),
+  }));
+  assert.equal(refresh.status, 200);
+  const rotated = await refresh.json();
+  assert.deepEqual(await verify(rotated.access_token), identity);
+  assert.notEqual(rotated.refresh_token, tokens.refresh_token);
+
+  const unknownActor = await createTestAccessToken({
+    ...cfg, clientId: 'oracle-client', subject: 'BIG',
+    actor: 'UNREGISTERED', scope: 'metropolis-unregistered',
+  });
+  await assert.rejects(() => verify(unknownActor));
+});
+
 test('authorization code cannot be replayed after successful exchange', async () => {
   const cfg = config(), handler = createOAuthHandler(cfg);
   const code = await createTestAuthorizationCode({ ...cfg, codeChallenge: challenge });
