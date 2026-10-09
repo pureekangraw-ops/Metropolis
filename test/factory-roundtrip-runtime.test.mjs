@@ -7,6 +7,7 @@ const SOURCE_SHA = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
 test('Factory round trip preserves Work/Checkpoint and stays UNKNOWN until DWARF domain return is verified', async () => {
   let receivedPayload = null;
+  let preflightCalls = 0;
   let domainVerified = false;
   const fetchImpl = async (url, init = {}) => {
     const target = String(url);
@@ -16,6 +17,19 @@ test('Factory round trip preserves Work/Checkpoint and stays UNKNOWN until DWARF
         storage: { status: 'READY' },
         transport: { status: 'READY' },
         sourceSha: SOURCE_SHA,
+      });
+    }
+    if (target.endsWith('/station/preflight')) {
+      preflightCalls++;
+      assert.equal(init.method, 'POST');
+      assert.ok(init.headers['x-metropolis-factory-signature']);
+      const payload = JSON.parse(init.body);
+      return Response.json({
+        allowed: true, status: 'READY', workId: payload.workId,
+        checkpointId: payload.checkpointId, workPassRef: payload.workPassRef,
+        actingActor: payload.actingActor, operation: payload.operation,
+        sourceSha: payload.expectedSourceSha,
+        validationScope: 'FACTORY_BOUNDARY_PREFLIGHT',
       });
     }
     if (target.endsWith('/station/receive')) {
@@ -70,6 +84,7 @@ test('Factory round trip preserves Work/Checkpoint and stays UNKNOWN until DWARF
     payload: { intent: 'BUILD_AND_RETURN', inputRefs: ['artifact://input'] },
   });
 
+  assert.equal(preflightCalls, 1);
   assert.equal(handed.state, WORK_STATE.HANDED_OFF);
   assert.equal(handed.workId, 'WORK-1');
   assert.equal(handed.checkpointId, 'CP-1');
