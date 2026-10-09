@@ -82,6 +82,73 @@ test('refresh-family revocation persists across gateway instances on shared city
   assert.equal(revocations.size, 1);
 });
 
+
+test('owner-registered ORACLE actor uses same MCP entrance, Work Pass and profile without GO impersonation', async () => {
+  const clients = [...JSON.parse(env.MCP_OAUTH_CLIENTS), {
+    clientId: 'oracle', clientSecret: 'test-oracle-secret',
+    subject: 'ORACLE', scope: 'metropolis-oracle',
+    redirectUris: ['https://client.example/oracle'],
+  }];
+  const registeredEnv = { ...env, MCP_OAUTH_CLIENTS: JSON.stringify(clients), MCP_WORK_GRANTS: '[]' };
+  const gateway = createGateway({ env: registeredEnv, storage: storage(), sourceSha: 'a'.repeat(40) });
+  const oracleToken = await createTestAccessToken({
+    issuer: origin, resource: origin + '/mcp',
+    signingKey: env.MCP_OAUTH_SIGNING_KEY,
+    subject: 'BIG', actor: 'ORACLE', scope: 'metropolis-oracle',
+    clientId: 'oracle',
+  });
+  const invoke = async (name, args, jwt = oracleToken) => {
+    const response = await gateway.fetch(new Request(origin + '/mcp', {
+      method: 'POST',
+      headers: { authorization: 'Bearer ' + jwt,
+        'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call',
+        params: { name, arguments: args } }),
+    }));
+    return { response, body: await response.json() };
+  };
+  const identity = (await invoke('metropolis_identity', {})).body.result.structuredContent;
+  assert.equal(identity.name, 'ORACLE');
+  assert.match(identity.id, /^prf_/);
+  const started = await invoke('metropolis_reception', {
+    action: 'input_information', payload: {
+      information: { title: 'Registered ORACLE test' }, ownerSystem: 'FACTORY',
+    },
+  });
+  assert.equal(started.body.result.isError, false);
+  const draftId = started.body.result.structuredContent.result.draftId;
+  for (const action of ['review', 'ready_to_create']) {
+    const step = await invoke('metropolis_reception', { action, draftId, payload: {} });
+    assert.equal(step.body.result.isError, false);
+  }
+  const created = await invoke('metropolis_reception', { action: 'create_work', draftId, payload: {} });
+  assert.equal(created.body.result.isError, false);
+  const work = created.body.result.structuredContent.result.work;
+  assert.equal(work.workPass.actor, 'ORACLE');
+  const arrived = (await invoke('metropolis_arrive', {})).body.result.structuredContent;
+  const pointer = arrived.current.works.find(x => x.workId === work.workId);
+  assert.equal(pointer.accessSource, 'PERSISTED_WORK_PASS');
+  assert.ok(pointer.authorizedActions.includes('handoff'));
+  const goToken = await createTestAccessToken({
+    issuer: origin, resource: origin + '/mcp',
+    signingKey: env.MCP_OAUTH_SIGNING_KEY,
+    subject: 'GO', scope: 'metropolis-go', clientId: 'go',
+  });
+  const denied = await invoke('metropolis_work', { action: 'read', workId: work.workId }, goToken);
+  assert.equal(denied.body.result.isError, true);
+  assert.equal(denied.body.result.structuredContent.reason, 'NO_GRANT');
+
+  const unregistered = createGateway({ env, storage: storage(), sourceSha: 'a'.repeat(40) });
+  const rejected = await unregistered.fetch(new Request(origin + '/mcp', {
+    method: 'POST',
+    headers: { authorization: 'Bearer ' + oracleToken,
+      'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call',
+      params: { name: 'metropolis_identity', arguments: {} } }),
+  }));
+  assert.equal(rejected.status, 401);
+});
+
 test('Work created by HERMES survives a fresh gateway on the same durable storage', async () => {
   const durable = storage();
   const first = createGateway({ env: { ...env, MCP_WORK_GRANTS: '[]' }, storage: durable, sourceSha: 'a'.repeat(40) });
