@@ -27,7 +27,7 @@ function storage({ rejectAudit = false } = {}) {
   };
 }
 function config() {
-  const consumed = new Set();
+  const consumed = new Set(), revoked = new Set();
   return {
     issuer: origin, resource: origin + '/mcp', signingKey, ownerPasscode,
     ownerId: 'BIG', allowCimd: true, clients: [],
@@ -40,6 +40,8 @@ function config() {
         consumed.add(key);
         return true;
       },
+      async refreshFamilyRevoked(id) { return revoked.has(id); },
+      async revokeRefreshFamily(id) { revoked.add(id); },
     },
   };
 }
