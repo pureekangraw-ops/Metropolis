@@ -140,3 +140,42 @@ test('Factory round trip preserves Work/Checkpoint and stays UNKNOWN until DWARF
   assert.equal(returned.workId, 'WORK-1');
   assert.equal(returned.checkpointId, 'CP-1');
 });
+
+test('Factory denies preflight before Handoff and leaves the Work unchanged', async () => {
+  let receiveCalls = 0;
+  const station = createFactoryStationRuntime({
+    baseUrl: 'https://factory.example', sharedSecret: 'secret',
+    fetchImpl: async (url, init = {}) => {
+      const target = String(url);
+      if (target.endsWith('/health')) return Response.json({
+        status: 'READY', storage: { status: 'READY' },
+        transport: { status: 'READY' }, sourceSha: SOURCE_SHA,
+      });
+      if (target.endsWith('/station/preflight')) {
+        assert.ok(init.headers['x-metropolis-factory-signature']);
+        return Response.json({ status: 'DENIED', allowed: false,
+          reason: 'FACTORY_ACTOR_DELEGATION_REQUIRED' }, { status: 403 });
+      }
+      if (target.endsWith('/station/receive')) receiveCalls++;
+      throw new Error('SHOULD_NOT_DISPATCH');
+    },
+  });
+  const city = createCityRuntime({
+    stationRuntimes: { FACTORY_STATION: station },
+  });
+  const existing = await city.intake({
+    workId: 'WORK-PREFLIGHT-DENIED', checkpointId: 'CP-1',
+    ownerSystem: 'FACTORY', requestedBy: 'GO', workPassActor: 'GO',
+  });
+  await assert.rejects(() => city.handoff({
+    workId: existing.workId, checkpointId: existing.checkpointId,
+    actor: 'LIGHT', stationId: 'FACTORY_STATION', operation: 'FACTORY_HANDOFF',
+    payload: { ownerDomain: 'CODE', intent: 'LIVE_E2E_BOUNDARY_HANDOFF',
+      scope: ['EXECUTE:CODE'] },
+  }), /FACTORY_ACTOR_DELEGATION_REQUIRED/);
+  const after = await city.getWork(existing.workId);
+  assert.equal(receiveCalls, 0);
+  assert.equal(after.state, WORK_STATE.RECEIVED);
+  assert.equal(after.journeys.length, 0);
+  assert.equal(after.handoff, null);
+});
