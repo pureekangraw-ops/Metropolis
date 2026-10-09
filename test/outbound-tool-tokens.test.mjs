@@ -42,3 +42,43 @@ test('outbound renewal rotates credential with encrypted storage', async () => {
   assert.equal((await manager.status(request)).lastOutcome, 'ROTATED');
   assert.equal(JSON.stringify([...durable.values.values()]).includes('refresh-one'), false);
 });
+
+
+test('unauthorized Work cannot use, inspect or provision tool credentials', async () => {
+  const durable = store();
+  let providerCalls = 0;
+  const manager = createOutboundToolTokenManager({
+    store: durable, encryptionKey: key, now: () => 1000000000000,
+    providers: { service: { stationId: 'SERVICE_STATION',
+      tokenEndpoint: 'https://provider.example/oauth/token',
+      clientId: 'test-client', clientSecret: 'test-only-value' } },
+    authorize: async c => ({ allowed: c.actor === 'GO' && c.workId === 'WORK-1' && c.operation === 'READ' }),
+    fetchImpl: async () => { providerCalls++; throw Error('must not contact provider'); },
+  });
+  const invalid = { ...request, actor: 'LIGHT' };
+  for (const op of [() => manager.provision(invalid, { accessToken: 'a', refreshToken: 'b', expiresAt: 1000000100000 }),
+    () => manager.getAccessToken(invalid), () => manager.status(invalid)]) {
+    await assert.rejects(op, /OUTBOUND_WORK_PERMISSION_DENIED/);
+  }
+  await assert.rejects(manager.getAccessToken({ ...request, stationId: 'OTHER_STATION' }), /OUTBOUND_PROVIDER_STATION_MISMATCH/);
+  await assert.rejects(manager.getAccessToken(request), /OUTBOUND_NOT_CONNECTED/);
+  assert.equal(providerCalls, 0);
+});
+
+test('uncertain refresh fails closed without replaying a possibly consumed token', async () => {
+  const durable = store();
+  let calls = 0;
+  const manager = createOutboundToolTokenManager({
+    store: durable, encryptionKey: key, now: () => 1000000000000,
+    providers: { service: { stationId: 'SERVICE_STATION',
+      tokenEndpoint: 'https://provider.example/oauth/token',
+      clientId: 'test-client', clientSecret: 'test-only-value' } },
+    authorize: async () => ({ allowed: true }),
+    fetchImpl: async () => { calls++; throw Error('unconfirmed exchange'); },
+  });
+  await manager.provision(request, { accessToken: 'a', refreshToken: 'b', expiresAt: 1000000020000 });
+  await assert.rejects(manager.getAccessToken(request), /OUTBOUND_TOKEN_REFRESH_FAILED/);
+  await assert.rejects(manager.getAccessToken(request), /OUTBOUND_REAUTH_REQUIRED/);
+  assert.equal(calls, 1);
+  assert.equal((await manager.status(request)).status, 'REAUTH_REQUIRED');
+});
