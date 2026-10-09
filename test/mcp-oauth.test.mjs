@@ -51,9 +51,9 @@ test('Notion CIMD authorizes LIGHT and exchanges and refreshes its tokens', asyn
   assert.deepEqual(await badRedirect.json(), { code: 'OAUTH_INVALID_REDIRECT_URI' });
 });
 function config() {
-  const consumed = new Set(), failures = new Map();
+  const consumed = new Set(), revoked = new Set(), failures = new Map();
   return { issuer, resource: issuer + '/mcp', signingKey: 'test-only-key', ownerPasscode: 'test-only-owner', clientId: 'go', clientSecret: 'test-only-secret', redirectUri: 'https://client.example/callback', subject: 'GO', scope: 'metropolis-go', now: () => 1000,
-    ledger: { async consume(key) { if (consumed.has(key)) return false; consumed.add(key); return true; }, async blocked(key, now) { return (failures.get(key) || []).filter(t => now - t < 900).length >= 5; }, async failure(key, now) { failures.set(key, [...(failures.get(key) || []), now]); } } };
+    ledger: { async consume(key) { if (consumed.has(key)) return false; consumed.add(key); return true; }, async blocked(key, now) { return (failures.get(key) || []).filter(t => now - t < 900).length >= 5; }, async failure(key, now) { failures.set(key, [...(failures.get(key) || []), now]); }, async refreshFamilyRevoked(id) { return revoked.has(id); }, async revokeRefreshFamily(id) { revoked.add(id); } } };
 }
 function token(form) { return new Request(issuer + '/oauth/token', { method: 'POST', headers: { authorization: 'Basic ' + btoa('go:test-only-secret'), 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(form) }); }
 test('authorization code cannot be replayed after successful exchange', async () => {
@@ -66,16 +66,21 @@ test('authorization code cannot be replayed after successful exchange', async ()
   assert.deepEqual(await verifyAccessToken(new Request(cfg.resource, { headers: { authorization: 'Bearer ' + tokens.access_token } }), cfg), { subject: 'GO', scope: 'metropolis-go' });
   assert.equal((await handler(token(form))).status, 400);
 });
-test('refresh token is single-use and replacement remains usable', async () => {
+test('refresh rotates normally, but reuse of an old token revokes descendants, not unrelated families', async () => {
   const cfg = config(), handler = createOAuthHandler(cfg);
-  const refresh = await createTestRefreshToken(cfg);
-  const form = { grant_type: 'refresh_token', refresh_token: refresh, resource: cfg.resource };
-  const first = await handler(token(form));
+  const firstToken = await createTestRefreshToken(cfg);
+  const independentToken = await createTestRefreshToken(cfg);
+  const form = value => ({ grant_type: 'refresh_token', refresh_token: value, resource: cfg.resource });
+  const first = await handler(token(form(firstToken)));
   assert.equal(first.status, 200);
   const rotated = (await first.json()).refresh_token;
-  assert.notEqual(rotated, refresh);
-  assert.equal((await handler(token(form))).status, 400);
-  assert.equal((await handler(token({ ...form, refresh_token: rotated }))).status, 200);
+  const second = await handler(token(form(rotated)));
+  assert.equal(second.status, 200);
+  const newest = (await second.json()).refresh_token;
+  assert.notEqual(newest, rotated);
+  assert.equal((await handler(token(form(firstToken)))).status, 400);
+  assert.equal((await handler(token(form(newest)))).status, 400);
+  assert.equal((await handler(token(form(independentToken)))).status, 200);
 });
 test('owner passcode attempts are rate limited across new requests', async () => {
   const cfg = config(), handler = createOAuthHandler(cfg);
