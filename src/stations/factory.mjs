@@ -100,8 +100,10 @@ export function createFactoryRailAdapter({
       && body.workPassRef === payload.workPassRef
       && (!body.domainVerified || body.result?.workPassRef === payload.workPassRef)
     );
+    const actorCorrelated = !payload?.actingActor || body.actingActor === payload.actingActor;
     const verified = Boolean(
-      response.ok
+      actorCorrelated
+      && response.ok
       && body.receiptId === receipt.receiptId
       && body.boundaryVerified === true
       && body.evidenceRef
