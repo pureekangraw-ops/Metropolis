@@ -178,7 +178,7 @@ test('Observatory native CIMD is pinned to GO and exchanges a GO-only token', as
   assert.deepEqual(await metadata.json(), {
     client_id: clientId,
     redirect_uris: [redirectUri],
-    grant_types: ['authorization_code'],
+    grant_types: ['authorization_code', 'refresh_token'],
     response_types: ['code'],
     token_endpoint_auth_method: 'none',
     scope: 'metropolis-go',
@@ -228,6 +228,21 @@ test('Observatory native CIMD is pinned to GO and exchanges a GO-only token', as
   assert.equal(tokens.scope, 'metropolis-go');
   assert.deepEqual(await verifyAccessToken(new Request(cfg.resource, {
     headers: { authorization: 'Bearer ' + tokens.access_token },
+  }), { ...cfg, requireClientId: true }), { subject: 'GO', scope: 'metropolis-go' });
+
+  const refresh = await handler(new Request(issuer + '/oauth/token', {
+    method: 'POST',
+    body: new URLSearchParams({
+      grant_type: 'refresh_token', client_id: clientId,
+      refresh_token: tokens.refresh_token, resource: cfg.resource,
+    }),
+  }));
+  assert.equal(refresh.status, 200);
+  const renewed = await refresh.json();
+  assert.equal(renewed.scope, 'metropolis-go');
+  assert.notEqual(renewed.refresh_token, tokens.refresh_token);
+  assert.deepEqual(await verifyAccessToken(new Request(cfg.resource, {
+    headers: { authorization: 'Bearer ' + renewed.access_token },
   }), { ...cfg, requireClientId: true }), { subject: 'GO', scope: 'metropolis-go' });
 
   const wrongId = await handler(new Request(issuer + '/oauth/authorize?' + new URLSearchParams({
