@@ -15,6 +15,69 @@ async function rpc(server, method, params = {}, token = 'go', id = 1) {
 async function arrive(server, token = 'go') {
   return (await (await rpc(server, 'tools/call', { name: 'metropolis_arrive', arguments: {} }, token)).json()).result.structuredContent;
 }
+test('explicit city grant enables LIGHT on GO-held Work without trusting caller-supplied identity', async () => {
+  let transport;
+  const factory = {
+    async handoff(args) {
+      transport = args.payload;
+      return { verified: true, boundaryVerified: true, receiptId: 'receipt-light', evidenceRef: 'evidence://light' };
+    },
+  };
+  const runtime = createCityRuntime({
+    store: createMemoryStore(), stationRuntimes: { FACTORY_STATION: factory },
+  });
+  const created = await runtime.intake({
+    workId: 'WORK-LIGHT-EXPLICIT', checkpointId: 'CP-1', ownerSystem: 'FACTORY',
+    requestedBy: 'GO', workPassActor: 'GO',
+  });
+  const server = service('actor-neutral', runtime, [{
+    actor: 'LIGHT', action: 'handoff', workId: created.workId,
+    stationId: 'FACTORY_STATION', operation: 'FACTORY_HANDOFF',
+  }]);
+  const result = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_work',
+    arguments: {
+      action: 'handoff', workId: created.workId,
+      payload: {
+        stationId: 'FACTORY_STATION', operation: 'FACTORY_HANDOFF',
+        payload: {
+          actingActor: 'GO',
+          cityAuthorization: { allowed: false, actor: 'GO' },
+          intent: 'LIVE_E2E_BOUNDARY_HANDOFF',
+        },
+      },
+    },
+  }, 'light')).json()).result;
+  assert.equal(result.isError, false);
+  assert.equal(result.structuredContent.record.state, 'HANDED_OFF');
+  assert.equal(transport.actingActor, 'LIGHT');
+  assert.equal(transport.workPass.actor, 'GO');
+  assert.equal(transport.cityAuthorization.actor, 'LIGHT');
+  assert.equal(transport.cityAuthorization.allowed, true);
+  assert.equal(transport.cityAuthorization.source, 'EXPLICIT_WORK_GRANT');
+  assert.equal(transport.cityAuthorization.workPassRef, created.workPassRef);
+  assert.equal(transport.cityAuthorization.operation, 'FACTORY_HANDOFF');
+});
+
+test('GO-owned Work is not accessible to ungranted LIGHT', async () => {
+  const runtime = createCityRuntime({ store: createMemoryStore() });
+  const created = await runtime.intake({
+    workId: 'WORK-LIGHT-DENIED', checkpointId: 'CP-1',
+    ownerSystem: 'FACTORY', requestedBy: 'GO', workPassActor: 'GO',
+  });
+  const server = service('actor-neutral-denied', runtime, []);
+  const result = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_work',
+    arguments: {
+      action: 'handoff', workId: created.workId,
+      payload: { stationId: 'FACTORY_STATION', operation: 'FACTORY_HANDOFF' },
+    },
+  }, 'light')).json()).result;
+  assert.equal(result.isError, true);
+  assert.equal(result.structuredContent.reason, 'NO_GRANT');
+  assert.equal((await runtime.getWork(created.workId)).state, 'RECEIVED');
+});
+
 test('same MCP entry identifies GO and LIGHT while discovery stays available before linking', async () => {
   assert.equal((await arrive(service())).actor, 'GO');
   assert.equal((await arrive(service(), 'light')).actor, 'LIGHT');

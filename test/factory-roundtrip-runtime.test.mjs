@@ -31,6 +31,7 @@ test('Factory round trip preserves Work/Checkpoint and stays UNKNOWN until DWARF
         workId: receivedPayload.workId,
         checkpointId: receivedPayload.checkpointId,
         workPassRef: receivedPayload.workPassRef,
+        actingActor: receivedPayload.actingActor,
         sourceSha: receivedPayload.expectedSourceSha,
         stationId: 'FACTORY-STATION',
         boundaryVerified: true,
@@ -77,6 +78,9 @@ test('Factory round trip preserves Work/Checkpoint and stays UNKNOWN until DWARF
   assert.equal(receivedPayload.expectedSourceSha, SOURCE_SHA);
   assert.equal(receivedPayload.workId, 'WORK-1');
   assert.equal(receivedPayload.checkpointId, 'CP-1');
+  assert.equal(receivedPayload.actingActor, 'GO');
+  assert.equal(receivedPayload.operation, 'FACTORY_HANDOFF');
+  assert.equal(receivedPayload.cityAuthorization, null);
   assert.equal(receivedPayload.workPass.workId, 'WORK-1');
   assert.equal(receivedPayload.workPass.checkpointId, 'CP-1');
   assert.equal(receivedPayload.workPassRef, `work-pass://${receivedPayload.workPass.passId}`);

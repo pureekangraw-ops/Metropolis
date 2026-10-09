@@ -453,7 +453,18 @@ export function createMetropolisMcp({
       let record;
       if (action === 'handoff') {
         if (!destinationAllowed(before, actor, explicit, payload)) throw new Error('DESTINATION_NOT_GRANTED');
-        record = await runtime.handoff({ workId, checkpointId: before.checkpointId, actor, stationId: payload.stationId, operation: payload.operation, payload: payload.payload || {} });
+        // Explicit per-Work delegation is attested inside the existing
+        // HMAC-authenticated rail; it is never accepted from MCP user payload.
+        const cityAuthorization = explicit.length
+          ? { kind: 'CITY_AUTHORIZATION_V1', issuedBy: 'CITY_HALL',
+              source: 'EXPLICIT_WORK_GRANT', allowed: true, action: 'handoff',
+              actor, workId, checkpointId: before.checkpointId,
+              workPassRef: before.workPassRef || null,
+              stationId: payload.stationId, operation: payload.operation }
+          : null;
+        record = await runtime.handoff({ workId, checkpointId: before.checkpointId, actor,
+          stationId: payload.stationId, operation: payload.operation,
+          payload: payload.payload || {}, cityAuthorization });
       } else if (action === 'return') {
         // Agent-supplied flags cannot declare verified owner reality.
         record = await runtime.returnWork({
