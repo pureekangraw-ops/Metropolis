@@ -23,7 +23,9 @@ export function createWorkPass({
   const id = required(workId, 'WORK_ID');
   const checkpoint = required(checkpointId, 'CHECKPOINT_ID');
   const holder = required(actor, 'ACTOR');
-  if (!['GO', 'LIGHT'].includes(holder)) throw new Error('WORK_PASS_ACTOR_NOT_ALLOWED');
+  // City Hall issues passes to authenticated, authorized actors. Keep the
+  // pass contract actor-neutral; the entry layer still authenticates principals.
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(holder)) throw new Error('WORK_PASS_ACTOR_NOT_ALLOWED');
 
   return Object.freeze({
     kind: 'WORK_PASS',
