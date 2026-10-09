@@ -540,7 +540,7 @@ export function createOAuthHandler(config = {}) {
           values.set(key, String(form.get(key) || ''));
         }
         const checked = await validateAuthorize(values, config);
-        const chosen = checked.fixedIdentity || actorIdentity(form.get('actor'));
+        const chosen = checked.fixedIdentity || actorIdentity(form.get('actor'), config);
         if (!chosen) return json({ code: 'ACTOR_REQUIRED' }, 400);
         if (checked.client.kind === 'REGISTERED' && chosen.subject !== checked.client.subject) return json({ code: 'ACTOR_MISMATCH' }, 400);
         const rateKey = 'owner-attempt:' + await sha256Hex(String(request.headers.get('cf-connecting-ip') || 'unknown') + ':' + checked.client.clientId + ':' + chosen.subject);
