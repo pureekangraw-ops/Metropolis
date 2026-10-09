@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createOAuthHandler, createTestAuthorizationCode, createTestRefreshToken, verifyAccessToken } from '../src/mcp-oauth.mjs';
+import { createOAuthHandler, createTestAccessToken, createTestAuthorizationCode, createTestRefreshToken, verifyAccessToken } from '../src/mcp-oauth.mjs';
 const issuer = 'https://city.example';
 const verifier = 'v'.repeat(64);
 const challenge = Buffer.from(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier))).toString('base64url');
