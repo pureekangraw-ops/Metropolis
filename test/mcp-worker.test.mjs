@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createGateway, bufferRequest } from '../src/mcp-worker.mjs';
-import { createTestAccessToken } from '../src/mcp-oauth.mjs';
+import { createTestAccessToken, createTestRefreshToken } from '../src/mcp-oauth.mjs';
 const origin = 'https://city.example';
 function storage() {
   const data = new Map();
@@ -48,6 +48,40 @@ function accessToken(subject = 'GO') {
     clientId: subject.toLowerCase(),
   });
 }
+
+test('refresh-family revocation persists across gateway instances on shared city storage', async () => {
+  const durable = storage();
+  const first = createGateway({ env, storage: durable, sourceSha: 'a'.repeat(40) });
+  const makeRefresh = () => createTestRefreshToken({
+    issuer: origin, resource: origin + '/mcp',
+    signingKey: env.MCP_OAUTH_SIGNING_KEY,
+    clientId: 'go', subject: 'GO', scope: 'metropolis-go',
+  });
+  const initial = await makeRefresh();
+  const unrelated = await makeRefresh();
+  const request = refreshToken => new Request(origin + '/oauth/token', {
+    method: 'POST',
+    headers: {
+      authorization: 'Basic ' + btoa('go:test-secret-go'),
+      'content-type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({
+      grant_type: 'refresh_token', refresh_token: refreshToken,
+      resource: origin + '/mcp',
+    }),
+  });
+  const response = await first.fetch(request(initial));
+  assert.equal(response.status, 200);
+  const successor = (await response.json()).refresh_token;
+
+  const second = createGateway({ env, storage: durable, sourceSha: 'a'.repeat(40) });
+  assert.equal((await second.fetch(request(initial))).status, 400);
+  assert.equal((await second.fetch(request(successor))).status, 400);
+  assert.equal((await second.fetch(request(unrelated))).status, 200);
+  const revocations = await durable.list({ prefix: 'oauth:refresh:revoked:' });
+  assert.equal(revocations.size, 1);
+});
+
 test('Work created by HERMES survives a fresh gateway on the same durable storage', async () => {
   const durable = storage();
   const first = createGateway({ env: { ...env, MCP_WORK_GRANTS: '[]' }, storage: durable, sourceSha: 'a'.repeat(40) });
