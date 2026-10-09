@@ -87,6 +87,8 @@ test('uncertain refresh fails closed without replaying a possibly consumed token
 test('concurrent tool calls never redeem the same refresh token twice', async () => {
   const durable = store();
   let release;
+  let enteredRefresh;
+  const refreshStarted = new Promise(resolve => { enteredRefresh = resolve; });
   let calls = 0;
   const manager = createOutboundToolTokenManager({
     store: durable, encryptionKey: key, now: () => 1000000000000,
@@ -96,6 +98,7 @@ test('concurrent tool calls never redeem the same refresh token twice', async ()
     authorize: async () => ({ allowed: true }),
     fetchImpl: async () => {
       calls++;
+      enteredRefresh();
       return new Promise(resolve => { release = () => resolve(Response.json({
         access_token: 'next-access', refresh_token: 'next-refresh',
         token_type: 'Bearer', expires_in: 3600,
@@ -104,7 +107,7 @@ test('concurrent tool calls never redeem the same refresh token twice', async ()
   });
   await manager.provision(request, { accessToken: 'a', refreshToken: 'b', expiresAt: 1000000020000 });
   const first = manager.getAccessToken(request);
-  for (let i = 0; i < 30 && !release; i++) await Promise.resolve();
+  await refreshStarted;
   assert.equal(typeof release, 'function');
   await assert.rejects(manager.getAccessToken(request), /OUTBOUND_REFRESH_IN_PROGRESS/);
   release();
