@@ -204,7 +204,8 @@ function configured(config) {
   return Boolean(
     config.issuer && config.signingKey && config.ownerPasscode &&
     (oauthClients(config).length || config.allowCimd === true) &&
-    config.ledger?.consume && config.ledger?.blocked && config.ledger?.failure,
+    config.ledger?.consume && config.ledger?.blocked && config.ledger?.failure &&
+    config.ledger?.refreshFamilyRevoked && config.ledger?.revokeRefreshFamily,
   );
 }
 
@@ -331,6 +332,7 @@ export async function createTestRefreshToken(config = {}) {
   return signEnvelope({
     type: 'refresh',
     jti: crypto.randomUUID(),
+    fid: config.familyId || crypto.randomUUID(),
     iss: config.issuer,
     aud: config.clientId,
     sub: config.subject || 'big',
@@ -420,7 +422,7 @@ function observatoryClientMetadata(config) {
   return json({
     client_id: clientId,
     redirect_uris: [redirectUri],
-    grant_types: ['authorization_code'],
+    grant_types: ['authorization_code', 'refresh_token'],
     response_types: ['code'],
     token_endpoint_auth_method: 'none',
     scope: ACTOR_SCOPES.GO,
@@ -573,9 +575,19 @@ export function createOAuthHandler(config = {}) {
           let refresh;
           try { refresh = await verifyEnvelope(refreshToken, config.signingKey); }
           catch { return json({ error: 'invalid_grant' }, 400); }
-          if (!validRefreshToken(refresh, config, client, resource, nowSeconds(config))) return json({ error: 'invalid_grant' }, 400);
-          if (!await config.ledger.consume('refresh:' + await sha256Hex(refreshToken), refresh.exp)) return json({ error: 'invalid_grant' }, 400);
-          const rotatedRefreshToken = await createTestRefreshToken({ ...config, clientId: client.clientId, resource, subject: refresh.sub, actor: refresh.act, scope: refresh.scope });
+          const now = nowSeconds(config);
+          if (!validRefreshToken(refresh, config, client, resource, now)) return json({ error: 'invalid_grant' }, 400);
+          // An existing family identifier is retained across rotation. Legacy
+          // refresh tokens without fid start a family from their signed jti.
+          const familyId = String(refresh.fid || refresh.jti || '');
+          if (!familyId || await config.ledger.refreshFamilyRevoked(familyId, now)) return json({ error: 'invalid_grant' }, 400);
+          if (!await config.ledger.consume('refresh:' + await sha256Hex(refreshToken), refresh.exp)) {
+            // Replay of a consumed refresh token invalidates all later tokens
+            // in that family; fail closed instead of letting a thief rotate.
+            await config.ledger.revokeRefreshFamily(familyId, now + refreshTokenTtlSeconds(config));
+            return json({ error: 'invalid_grant' }, 400);
+          }
+          const rotatedRefreshToken = await createTestRefreshToken({ ...config, clientId: client.clientId, resource, subject: refresh.sub, actor: refresh.act, scope: refresh.scope, familyId });
           return json({
             access_token: await createTestAccessToken({ ...config, clientId: client.clientId, resource, subject: refresh.sub, actor: refresh.act, scope: refresh.scope }),
             token_type: 'Bearer',
