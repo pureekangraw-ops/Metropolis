@@ -28,6 +28,7 @@ export function createFactoryStationRuntime({ baseUrl, sharedSecret, fetchImpl =
       ...payload,
       workId,
       checkpointId,
+      operation: text(operation) || 'FACTORY_HANDOFF',
       expectedSourceSha: sourceSha,
       requestedResult: text(payload.requestedResult) || text(payload.intent) || text(operation) || 'FACTORY_HANDOFF',
       source: { stationId: 'METROPOLIS-STATION', system: 'METROPOLIS' },
