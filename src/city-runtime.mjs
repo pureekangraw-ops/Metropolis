@@ -182,6 +182,8 @@ export function createCityRuntime({ store = createMemoryStore(), clock = () => n
     const id=text(workId,'workId'); let record=await store.get(`work:${id}`);
     if(!record) throw new Error('WORK_NOT_FOUND');
     if(record.checkpointId!==text(checkpointId,'checkpointId')) throw new Error('CHECKPOINT_MISMATCH');
+    if(record.handoff?.external?.jobId && record.handoff.external.status!=='READBACK_VERIFIED')
+      throw new Error('GREENHOUSE_JOB_PENDING');
     let review=record.stationReturnReview;
     if(!review||review.status!=='GO_REVIEW_REQUIRED'||(stationReviewed!==true&&review.verified!==true)){
       const stationRuntime=stations[record.handoff?.stationId]; let trustedReadback=clone(readback); let trustedVerified=false;

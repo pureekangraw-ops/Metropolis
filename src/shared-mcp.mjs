@@ -400,6 +400,11 @@ export function createMetropolisMcp({
           checkpointId: work.checkpointId,
           view,
         });
+        if (stationResult?.accepted === true && stationResult?.jobId &&
+          stationResult.workId === work.workId && stationResult.checkpointId === work.checkpointId &&
+          stationResult.actor === actor && stationResult.stationId === 'OBSERVATORY_STATION') {
+          return toolResult({actor,workId:work.workId,checkpointId:work.checkpointId,stationResult});
+        }
         if (stationResult?.readbackVerified !== true
           || stationResult?.receipt?.status !== 'READBACK_VERIFIED'
           || stationResult?.receipt?.stationId !== 'OBSERVATORY_STATION'
@@ -490,9 +495,11 @@ export function createMetropolisMcp({
         : action === 'return'
           ? readback?.return?.verified === true
           : false;
-      return toolResult({ actor, record: readback, readbackVerified: true, ownerExecutionVerified });
+      return toolResult({ actor, record: readback, readbackVerified: true, ownerExecutionVerified,
+        ...(action==='handoff'&&readback.handoff?.external?.accepted===true ?
+          {job:{jobId:readback.handoff.external.jobId,status:readback.handoff.external.status,workId,checkpointId:readback.checkpointId}} : {}) });
     } catch (error) {
-      const known = /^(.*_REQUIRED|WORK_NOT_FOUND|WORK_ALREADY_EXISTS|WORK_NOT_ONLINE|WORK_CANCELLED|NO_GRANT|READBACK_MISMATCH|INVALID_ARGUMENT|INVALID_PAYLOAD|OWNER_NOT_GRANTED|DESTINATION_NOT_GRANTED|ACTION_NOT_FOUND|WRITE_READBACK_MISMATCH|FACTORY_[A-Z0-9_]+)$/;
+      const known = /^(.*_REQUIRED|WORK_NOT_FOUND|WORK_ALREADY_EXISTS|WORK_NOT_ONLINE|WORK_CANCELLED|NO_GRANT|READBACK_MISMATCH|INVALID_ARGUMENT|INVALID_PAYLOAD|OWNER_NOT_GRANTED|DESTINATION_NOT_GRANTED|ACTION_NOT_FOUND|WRITE_READBACK_MISMATCH|FACTORY_[A-Z0-9_]+|GREENHOUSE_[A-Z0-9_]+)$/;
       return toolResult({ reason: known.test(error.message) ? error.message : 'WORK_OPERATION_FAILED' }, true);
     }
   }

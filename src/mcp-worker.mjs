@@ -5,6 +5,7 @@ import { SOURCE_SHA } from './mcp-source-identity.mjs';
 import { createFactoryStationRuntime } from './factory-station-runtime.mjs';
 import { createTabletRuntime } from './tablet-runtime.mjs';
 import { createObservatoryStation } from './observatory-station.mjs';
+import { createGreenhouseConveyor } from './greenhouse-conveyor.mjs';
 import { inspectWorkPass } from './work-pass.mjs';
 
 export async function bufferRequest(request, { timeoutMs = 10000, maxBytes = 65536 } = {}) {
@@ -78,7 +79,7 @@ function configFor(env, storage) {
 }
 
 export function createGateway({ env, storage, sourceSha = SOURCE_SHA } = {}) {
-  let oauth, service, runtime, observatory, authenticateMcp, resourceMetadataUrl, grants, configured = false;
+  let oauth, service, runtime, observatory, conveyor, authenticateMcp, resourceMetadataUrl, grants, configured = false;
   try {
     if (!/^[a-f0-9]{40}$/.test(sourceSha)) throw new Error('SOURCE_UNKNOWN');
     const cfg = configFor(env, storage);
@@ -104,10 +105,14 @@ export function createGateway({ env, storage, sourceSha = SOURCE_SHA } = {}) {
           return [...rows.entries()].map(([key, value]) => ({ key, value }));
         },
       },
-      stationRuntimes: { FACTORY_STATION: factoryStation },
+      stationRuntimes: { FACTORY_STATION: {
+        handoff: input => conveyor.factory.handoff(input),
+        readback: input => conveyor.factory.readback(input),
+      } },
       tabletRuntime,
     });
     observatory = createObservatoryStation({ env, storage, runtime });
+    conveyor = createGreenhouseConveyor({env,storage,runtime,factory:factoryStation,observatory});
     oauth = createOAuthHandler(cfg);
     resourceMetadataUrl = cfg.issuer + '/.well-known/oauth-protected-resource';
     authenticateMcp = async request => {
@@ -124,7 +129,7 @@ export function createGateway({ env, storage, sourceSha = SOURCE_SHA } = {}) {
       version: '1.0.0',
       grants,
       allowedActors: [...allowedActors],
-      observatoryObserve: input => observatory.observe(input),
+      observatoryObserve: input => conveyor.observe(input),
       allowedOrigins: [cfg.issuer, 'https://chatgpt.com', ...JSON.parse(env.MCP_ALLOWED_ORIGINS || '[]')],
       authenticate: authenticateMcp,
       appendDelegationAudit: async event => {
@@ -141,6 +146,7 @@ export function createGateway({ env, storage, sourceSha = SOURCE_SHA } = {}) {
     const url = new URL(request.url);
     if (url.pathname === '/health') return json({ service: 'METROPOLIS_MCP', version: '1.0.0', sourceSha, status: configured ? 'READY' : 'NOT_CONFIGURED', persistentStorage: Boolean(storage), observedAt: new Date().toISOString(), ownerSystemsVerified: false }, configured ? 200 : 503);
     if (!configured) return json({ reason: 'METROPOLIS_MCP_NOT_CONFIGURED' }, 503);
+    if (['/station/dispatch','/station/readback'].includes(url.pathname)) return conveyor.fetch(request);
     if (url.origin !== env.MCP_PUBLIC_ORIGIN) return json({ reason: 'ORIGIN_MISMATCH' }, 403);
     if (url.pathname === '/observatory/pair') {
       if (request.method !== 'POST') return json({ reason: 'METHOD_NOT_ALLOWED' }, 405);

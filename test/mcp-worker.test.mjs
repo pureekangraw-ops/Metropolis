@@ -307,9 +307,12 @@ test('Observatory pairing requires authenticated GO and explicit existing READ W
   assert.equal((await denied.json()).reason, 'NO_GRANT');
 });
 
-test('Observatory station observation returns a readback receipt without changing Work lifecycle', async () => {
+test('Observatory observation queues through Greenhouse and verifies destination receipt without changing Work lifecycle', async () => {
   const durable = storage();
-  const gateway = createGateway({ env: { ...env, MCP_WORK_GRANTS: '[]' }, storage: durable, sourceSha: 'a'.repeat(40) });
+  let job;
+  const railEnv={...env,MCP_WORK_GRANTS:'[]',METROPOLIS_GREENHOUSE_RAIL_SECRET:'test-rail',
+    GREENHOUSE_TRANSPORT:{async fetch(request){job=await request.json();return new Response(JSON.stringify({...job,status:'QUEUED'}),{status:202});}}};
+  const gateway=createGateway({env:railEnv,storage:durable,sourceSha:'a'.repeat(40)});
   const work = await createObservatoryWork(gateway);
   const goToken = await accessToken('GO');
   const paired = await gateway.fetch(new Request(origin + '/observatory/pair', {
@@ -348,10 +351,16 @@ test('Observatory station observation returns a readback receipt without changin
   assert.equal(observed.body.result.isError, false);
   const result = observed.body.result.structuredContent.stationResult;
   assert.equal(result.stationId, 'OBSERVATORY_STATION');
-  assert.equal(result.readbackVerified, true);
-  assert.equal(result.receipt.status, 'READBACK_VERIFIED');
-  assert.equal(result.receipt.businessOutcome, 'UNKNOWN');
-  assert.equal(result.snapshot.url, 'https://example.com/private');
+  assert.equal(result.status,'QUEUED');
+  assert.ok(result.jobId);
+  const {railRequest}=await import('../src/greenhouse-conveyor.mjs');
+  const executed=await railRequest({fetch:request=>gateway.fetch(request)},'test-rail','/station/dispatch',job);
+  const confirmed=await executed.json();
+  assert.equal(confirmed.verified,true);
+  assert.equal(confirmed.domainCompleted,false);
+  const saved=await durable.get('greenhouse:job:'+job.attemptId);
+  assert.equal(saved.external.stationResult.receipt.status,'READBACK_VERIFIED');
+  assert.equal(saved.external.stationResult.snapshot.url,'https://example.com/private');
   const read = await call(gateway, 'metropolis_work', { action: 'read', workId: work.workId });
   assert.equal(read.body.result.structuredContent.record.state, 'RECEIVED');
 });
