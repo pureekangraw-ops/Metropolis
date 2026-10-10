@@ -31,7 +31,7 @@ export function createToolSignalLine({store, clock=()=>new Date().toISOString(),
     const key=PREFIX+'message:'+from+':'+messageId;
     const prior=await store.get(key);
     if (prior) {
-      if (prior.to!==to||prior.kind!==kind||prior.workId!==workId||prior.checkpointId!==checkpointId||JSON.stringify(prior.body)!==encoded) throw new Error('TOOL_SIGNAL_IDEMPOTENCY_CONFLICT');
+      if (prior.to!==to||prior.signalKind!==kind||prior.workId!==workId||prior.checkpointId!==checkpointId||JSON.stringify(prior.body)!==encoded) throw new Error('TOOL_SIGNAL_IDEMPOTENCY_CONFLICT');
       return copy(prior);
     }
     const record={kind:'TOOL_SIGNAL',messageId,from,to,signalKind:kind,workId,checkpointId,body:copy(body),observedAt:clock()};
