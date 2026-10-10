@@ -73,7 +73,7 @@ export function createFactoryRailAdapter({
     });
     const body = await response.json().catch(() => ({}));
     if (!response.ok || body.allowed !== true) {
-      const code = typeof body.reason === 'string' && /^[A-Z][A-Z0-9_]{0,127}$/.test(body.reason)
+      const code = typeof body.reason === 'string' && /^[A-Za-z][A-Za-z0-9_.]{0,127}$/.test(body.reason)
         ? body.reason : 'FACTORY_PREFLIGHT_UNAVAILABLE';
       throw Object.assign(new Error(code), { stage: 'AUTH', code });
     }

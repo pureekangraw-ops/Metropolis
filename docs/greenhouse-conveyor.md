@@ -11,6 +11,9 @@ the Factory V2 HMAC adapter, or the existing Observatory snapshot reader. No use
 this service boundary. Factory readback and Observatory receipts preserve Work/checkpoint.
 
 Use metropolis_work handoff FACTORY_STATION with the destination operation for Factory.
+Factory cargo requires ownerDomain (CODE/VISUAL/LOGIC), intent and scope including EXECUTE:<domain>.
+For an authorized transport-only acceptance check use the Factory's existing
+LIVE_E2E_BOUNDARY_HANDOFF intent; its receipt does not assert tool or domain completion.
 Use OBSERVATORY_STATION / observe with payload.view=browser or map for an OBSERVATORY Work.
 Observation requires per-Work READ plus handoff; it grants no browser command. GO and LIGHT
 follow the same Work policy. A paired device must publish a fresh actual capture.

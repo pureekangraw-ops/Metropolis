@@ -21,6 +21,9 @@ export async function verifyRail(request, secret, body) {
 export function createGreenhouseConveyor({env, storage, runtime, factory, observatory, clock=()=>new Date().toISOString()}) {
   const key = id => 'greenhouse:job:'+id;
   async function enqueue(input) {
+    if(input.stationId==='FACTORY_STATION'&&(!['CODE','VISUAL','LOGIC'].includes(input.payload.ownerDomain)||
+      !Array.isArray(input.payload.scope)||!input.payload.scope.includes('EXECUTE:'+input.payload.ownerDomain)||
+      typeof input.payload.intent!=='string'||!input.payload.intent.trim()))throw new Error('FACTORY_CARGO_INVALID');
     const seed=[input.workId,input.checkpointId,input.stationId,input.operation,input.payload.journeyId||crypto.randomUUID()].join('|');
     const attemptId='ATT-'+hex(new Uint8Array(await crypto.subtle.digest('SHA-256',encoder.encode(seed)))).slice(0,40);
     // Save the City-approved request before enqueue. Never trust a queue's authority claims.

@@ -11,7 +11,7 @@ function fixture(actor='LIGHT'){
   const env={METROPOLIS_GREENHOUSE_RAIL_SECRET:'test-only-rail',MCP_WORK_GRANTS:'[]',GREENHOUSE_TRANSPORT:{async fetch(request){envelope=await request.json();return new Response(JSON.stringify({...envelope,status:'QUEUED'}),{status:202});}}};
   const conveyor=createGreenhouseConveyor({env,storage,runtime:{getWork:id=>storage.get('work:'+id)},
     factory:{handoff:async input=>{calls++;assert.equal(input.payload.requestedResult,'Original cargo');return {verified:true,receiptId:'factory-1',evidenceRef:'factory://proof'};},readback:async()=>({verified:true})},observatory:{}});
-  const input={workId,checkpointId,actor,stationId:'FACTORY_STATION',operation:'CODE',payload:{journeyId:'journey-1',requestedResult:'Original cargo',workPassRef:'work-pass://'+pass.passId,workPass:pass}};
+  const input={workId,checkpointId,actor,stationId:'FACTORY_STATION',operation:'CODE',payload:{ownerDomain:'CODE',scope:['EXECUTE:CODE'],intent:'Original cargo',journeyId:'journey-1',requestedResult:'Original cargo',workPassRef:'work-pass://'+pass.passId,workPass:pass}};
   return {rows,storage,conveyor,input,get envelope(){return envelope;},get calls(){return calls;},
     invoke:path=>railRequest({fetch:r=>conveyor.fetch(r)},env.METROPOLIS_GREENHOUSE_RAIL_SECRET,path,envelope)};
 }
@@ -50,4 +50,9 @@ test('legacy Factory preflight failure proves no send and recovers the exact ori
  assert.equal(x.calls,1);
  const status=await x.conveyor.jobStatus(x.rows.get('work:'+x.input.workId));
  assert.equal(status[0].jobId,queued.jobId);assert.equal(status[0].deliveryVerified,true);
+});
+test('missing Factory domain or scope is rejected before the queue receives a job',async()=>{
+ const x=fixture();
+ await assert.rejects(()=>x.conveyor.factory.handoff({...x.input,payload:{...x.input.payload,ownerDomain:undefined}}),/FACTORY_CARGO_INVALID/);
+ assert.equal(x.envelope,undefined);assert.equal(x.calls,0);
 });
