@@ -134,6 +134,7 @@ export function createGateway({ env, storage, sourceSha = SOURCE_SHA } = {}) {
       grants,
       allowedActors: [...allowedActors],
       observatoryObserve: input => conveyor.observe(input),
+      jobStatus:work=>conveyor.jobStatus(work),
       allowedOrigins: [cfg.issuer, 'https://chatgpt.com', ...JSON.parse(env.MCP_ALLOWED_ORIGINS || '[]')],
       authenticate: authenticateMcp,
       appendDelegationAudit: async event => {

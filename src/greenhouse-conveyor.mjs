@@ -79,11 +79,24 @@ export function createGreenhouseConveyor({env, storage, runtime, factory, observ
       // Only errors that provably precede destination execution may be retried.
       const safe=new Set(['DEVICE_NOT_PAIRED','STALE_CAPTURE','READBACK_CONTEXT_MISMATCH','WORK_OWNER_MISMATCH','VIEW_INVALID']);
       const notSent=(job.stationId==='OBSERVATORY_STATION'&&safe.has(error.message))||error.notSent===true;
-      await storage.put(key(attemptId),{...job,status:notSent?'WAITING_ROUTE':'OUTCOME_UNKNOWN',reason:error.message,dispatchedAt:clock()});
+      await storage.put(key(attemptId),{...job,status:notSent?'WAITING_ROUTE':'OUTCOME_UNKNOWN',notSent,reason:error.message,dispatchedAt:clock()});
       return notSent?{notSent:true,reason:error.message}:{accepted:false,reason:'DISPATCH_READBACK_REQUIRED'};
     }
   }
   return {
+    async jobStatus(work){
+      const ids=[work.handoff?.external?.jobId,...(work.stationJobs||[]).map(x=>x.jobId)].filter(Boolean);
+      const deliveries=[];
+      for(const id of [...new Set(ids)].slice(-20)){
+        const job=await storage.get(key(id));
+        if(job?.workId===work.workId&&job.checkpointId===work.checkpointId)deliveries.push({jobId:id,
+          workId:job.workId,checkpointId:job.checkpointId,stationId:job.stationId,operation:job.operation,
+          status:job.status,reason:job.reason||null,receiptRef:job.result?.receiptRef||null,
+          evidenceRef:job.result?.evidenceRef||null,deliveryVerified:job.result?.verified===true,
+          workCompletion:'NOT_ASSERTED'});
+      }
+      return deliveries;
+    },
     factory:{handoff:enqueue,readback:async input=> input.handoff?.external?.status==='READBACK_VERIFIED'
       ? factory.readback(input) : {verified:false,reason:'GREENHOUSE_JOB_PENDING',jobId:input.handoff?.external?.jobId}},
     observation:{
@@ -113,7 +126,7 @@ export function createGreenhouseConveyor({env, storage, runtime, factory, observ
         if(job.result)return json(job.result);
         // These legacy errors were produced strictly before /station/receive.
         const beforeSend=['FACTORY_STATION_NOT_CONFIGURED','FACTORY_STATION_NOT_READY','FACTORY_SOURCE_SHA_UNVERIFIED'];
-        if(job.status==='WAITING_ROUTE'||(job.status==='OUTCOME_UNKNOWN'&&beforeSend.includes(job.reason))){
+        if(job.status==='WAITING_ROUTE'||(job.status==='OUTCOME_UNKNOWN'&&(job.notSent===true||beforeSend.includes(job.reason)))){
           await storage.put(key(job.attemptId),{...job,status:'WAITING_ROUTE'});
           return json({notSent:true,reason:job.reason||'DESTINATION_NOT_READY'});
         }

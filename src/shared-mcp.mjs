@@ -258,6 +258,7 @@ export function createMetropolisMcp({
   version = '1.0.0',
   allowedOrigins = [],
   observatoryObserve,
+  jobStatus,
   appendDelegationAudit,
 } = {}) {
   if (!runtime || typeof authenticate !== 'function') throw new Error('RUNTIME_AUTHENTICATOR_REQUIRED');
@@ -451,6 +452,7 @@ export function createMetropolisMcp({
           readbackVerified: result.readbackVerified,
           ownerExecutionVerified: false,
           workTruthChanged: false,
+          ...(typeof jobStatus==='function'?{deliveries:await jobStatus(result.record)}:{}),
         });
       }
       const before = await runtime.getWork(workId);
