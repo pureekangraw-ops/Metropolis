@@ -125,7 +125,7 @@ export function createGreenhouseConveyor({env, storage, runtime, factory, observ
       if(new URL(request.url).pathname==='/station/readback'){
         if(job.result)return json(job.result);
         // These legacy errors were produced strictly before /station/receive.
-        const beforeSend=['FACTORY_STATION_NOT_CONFIGURED','FACTORY_STATION_NOT_READY','FACTORY_SOURCE_SHA_UNVERIFIED'];
+        const beforeSend=['FACTORY_STATION_NOT_CONFIGURED','FACTORY_STATION_NOT_READY','FACTORY_SOURCE_SHA_UNVERIFIED','FACTORY_PREFLIGHT_UNAVAILABLE','FACTORY_PREFLIGHT_CORRELATION_FAILED'];
         if(job.status==='WAITING_ROUTE'||(job.status==='OUTCOME_UNKNOWN'&&(job.notSent===true||beforeSend.includes(job.reason)))){
           await storage.put(key(job.attemptId),{...job,status:'WAITING_ROUTE'});
           return json({notSent:true,reason:job.reason||'DESTINATION_NOT_READY'});

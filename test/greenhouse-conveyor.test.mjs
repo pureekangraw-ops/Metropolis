@@ -37,3 +37,17 @@ test('signed rail cannot retarget an approved Job to another Work',async()=>{
   const forged=await x.conveyor.fetch(new Request('https://city.internal/station/dispatch',{method:'POST',body:JSON.stringify(x.envelope)}));
   assert.equal(forged.status,401);
 });
+
+
+test('legacy Factory preflight failure proves no send and recovers the exact original job',async()=>{
+ const x=fixture();const queued=await x.conveyor.factory.handoff(x.input);
+ x.rows.get('work:'+x.input.workId).handoff={external:queued};
+ const key='greenhouse:job:'+queued.jobId,job=x.rows.get(key);
+ x.rows.set(key,{...job,status:'OUTCOME_UNKNOWN',reason:'FACTORY_PREFLIGHT_UNAVAILABLE'});
+ const proof=await (await x.invoke('/station/readback')).json();
+ assert.equal(proof.notSent,true);assert.equal(x.calls,0);
+ assert.equal((await (await x.invoke('/station/dispatch')).json()).verified,true);
+ assert.equal(x.calls,1);
+ const status=await x.conveyor.jobStatus(x.rows.get('work:'+x.input.workId));
+ assert.equal(status[0].jobId,queued.jobId);assert.equal(status[0].deliveryVerified,true);
+});
