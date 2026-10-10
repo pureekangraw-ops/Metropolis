@@ -3,6 +3,7 @@ import { createMetropolisMcp, json } from './shared-mcp.mjs';
 import { createOAuthHandler, verifyAccessToken } from './mcp-oauth.mjs';
 import { SOURCE_SHA } from './mcp-source-identity.mjs';
 import { createFactoryStationRuntime } from './factory-station-runtime.mjs';
+import { createGreenhouseFactoryTransit } from './greenhouse-factory-transit.mjs';
 import { createTabletRuntime } from './tablet-runtime.mjs';
 import { createObservatoryStation } from './observatory-station.mjs';
 import { inspectWorkPass } from './work-pass.mjs';
@@ -90,6 +91,13 @@ export function createGateway({ env, storage, sourceSha = SOURCE_SHA } = {}) {
       baseUrl: env.FACTORY_RUNTIME_URL,
       sharedSecret: env.METROPOLIS_FACTORY_SHARED_SECRET,
     });
+    // Opt-in per existing Work ID: other Factory Work continues on its established rail.
+    const routedFactory = createGreenhouseFactoryTransit({
+      factory: factoryStation,
+      service: env.GREENHOUSE_TRANSPORT,
+      sharedSecret: env.METROPOLIS_GREENHOUSE_RAIL_SECRET,
+      onlyWorkId: env.GREENHOUSE_PILOT_WORK_ID,
+    });
     const tabletRuntime = createTabletRuntime({
       bucket: env.TABLET_STORAGE,
       sourceSha,
@@ -104,7 +112,7 @@ export function createGateway({ env, storage, sourceSha = SOURCE_SHA } = {}) {
           return [...rows.entries()].map(([key, value]) => ({ key, value }));
         },
       },
-      stationRuntimes: { FACTORY_STATION: factoryStation },
+      stationRuntimes: { FACTORY_STATION: routedFactory },
       tabletRuntime,
     });
     observatory = createObservatoryStation({ env, storage, runtime });
