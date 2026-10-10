@@ -118,6 +118,13 @@ export function createObservatoryStation({ env = {}, storage, runtime, clock = (
   }
 
   async function pair({ actor, workId } = {}) {
+    if (!workId) {
+      if (typeof actor !== 'string' || !actor.trim()) fail('AUTH_REQUIRED');
+      const deviceId = crypto.randomUUID();
+      const token = Array.from(crypto.getRandomValues(new Uint8Array(32)), value => value.toString(16).padStart(2, '0')).join('');
+      await storage.put(sessionKey(deviceId), {deviceId, actor, workId: null, checkpointId: null, tokenHash: await hash(token), pairedAtEpochMs: clock(), active: true});
+      return {deviceId, token, publishSnapshot: `${origin}/observatory/device/${deviceId}/snapshot`, toolPairing: true};
+    }
     const work = await boundWork(actor, workId);
     const previousLink = await storage.get(workKey(work.workId));
     if (previousLink?.deviceId) {
@@ -154,7 +161,7 @@ export function createObservatoryStation({ env = {}, storage, runtime, clock = (
     if (!UUID.test(deviceId) || typeof token !== 'string' || !token) fail('AUTH_REQUIRED');
     const session = await storage.get(sessionKey(deviceId));
     if (!session?.active || !session.tokenHash || await hash(token) !== session.tokenHash) fail('AUTH_REQUIRED');
-    const work = await boundWork(session.actor, session.workId, session.checkpointId);
+    const work = session.workId ? await boundWork(session.actor, session.workId, session.checkpointId) : null;
     return { session, work };
   }
 
@@ -165,7 +172,8 @@ export function createObservatoryStation({ env = {}, storage, runtime, clock = (
     const now = clock();
     if (safeSnapshot.capturedAtEpochMs > now + MAX_FUTURE_MS
       || safeSnapshot.capturedAtEpochMs < now - MAX_AGE_MS) fail('STALE_CAPTURE');
-    const old = await storage.get(snapshotKey(session.workId, view));
+    const targetKey = session.workId ? snapshotKey(session.workId, view) : `observatory:device-snapshot:${session.deviceId}:${view}`;
+    const old = await storage.get(targetKey);
     if (old?.snapshot) {
       if (safeSnapshot.captureId === old.snapshot.captureId) {
         if (JSON.stringify(safeSnapshot) !== JSON.stringify(old.snapshot)) fail('DUPLICATE_CHANGED');
@@ -192,8 +200,8 @@ export function createObservatoryStation({ env = {}, storage, runtime, clock = (
       snapshot: safeSnapshot,
       acceptedAtEpochMs: now,
     };
-    await storage.put(snapshotKey(session.workId, view), record);
-    const readback = await storage.get(snapshotKey(session.workId, view));
+    await storage.put(targetKey, record);
+    const readback = await storage.get(targetKey);
     if (JSON.stringify(readback) !== JSON.stringify(record)) fail('WRITE_READBACK_MISMATCH');
     return {
       accepted: true,
@@ -257,6 +265,14 @@ export function createObservatoryStation({ env = {}, storage, runtime, clock = (
   async function disconnect({ deviceId, token } = {}) {
     const { session } = await sessionFor(deviceId, token);
     await storage.put(sessionKey(deviceId), { ...session, active: false, tokenHash: null });
+    if (!session.workId) {
+      for (const view of ['browser', 'map']) {
+        const key = `observatory:device-snapshot:${deviceId}:${view}`;
+        if (storage.delete) await storage.delete(key);
+        else await storage.put(key, null);
+      }
+      return { disconnected: true, stationId: STATION_ID };
+    }
     const link = await storage.get(workKey(session.workId));
     if (link?.deviceId === deviceId) {
       if (storage.delete) await storage.delete(workKey(session.workId));
