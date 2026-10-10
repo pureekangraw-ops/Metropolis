@@ -18,7 +18,7 @@ export function createWorkPass({
   checkpointId,
   actor,
   issuedAt = new Date().toISOString(),
-  handoffStations = ['FACTORY_STATION'],
+  handoffStations = ['FACTORY_STATION', 'DRIVE_STATION'],
 } = {}) {
   const id = required(workId, 'WORK_ID');
   const checkpoint = required(checkpointId, 'CHECKPOINT_ID');

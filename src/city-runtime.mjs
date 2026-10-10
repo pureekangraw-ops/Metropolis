@@ -173,7 +173,43 @@ export function createCityRuntime({ store = createMemoryStore(), clock = () => n
       reports=[...reports,report];
       dataLifecycle=rotatePixieData(dataLifecycle,{dataId:`${id}:DATA:PIXIE:${reports.length}`,workId:id,checkpointId:record.checkpointId,producer:'PIXIE',kind:'TOOL_REPORT',payloadRef:`pixie-report://${reportId}`,evidenceRefs:report.evidenceRefs,ownerSystem:record.ownerSystem,truthOwner:record.ownerSystem,createdAt:now});
     }
-    const next={...record,state:WORK_STATE.HANDED_OFF,handoff,stationReturnReview:null,journeys:[...(record.journeys||[]),journey],reports,dataLifecycle,
+    // A Post Office delivery receipt is issued only after Google Drive proves actual
+    // byte-for-byte provider readback. Postal routing itself is not execution evidence.
+    let outboundPostal = null;
+    if (station === 'DRIVE_STATION' && external?.providerVerified === true
+      && external?.verified === true && external?.evidenceRef) {
+      const central = createPostOfficeBranch({ branchId: 'CENTRAL_POST_OFFICE', systemId: 'METROPOLIS', role: 'CENTRAL_OFFICE' });
+      const drive = createPostOfficeBranch({ branchId: 'DRIVE_POST_OFFICE', systemId: 'GOOGLE_DRIVE', role: 'SUB_OFFICE' });
+      const mailbox = createMailbox({ mailboxId: 'DRIVE_ARCHIVE_MAILBOX', owner: 'GOOGLE_DRIVE', receiver: 'GOOGLE_DRIVE' });
+      const cargo = createCargoEnvelope({
+        dataId: `${id}:DRIVE:CARGO:${(record.journeys || []).length + 1}`,
+        dataKind: 'ARTIFACT',
+        payloadRef: external.sourceRef,
+        owner: record.ownerSystem,
+        sender: central.branchId,
+        receiver: 'GOOGLE_DRIVE',
+        mailbox: mailbox.mailboxId,
+        originBranch: central.branchId,
+        destinationBranch: drive.branchId,
+      });
+      outboundPostal = deliverBranchCargo(cargo, {
+        originBranch: central, destinationBranch: drive, mailbox,
+        receiptId: external.receiptId, observedAt: external.observedAt || now,
+      });
+      if (outboundPostal.status === 'DELIVERED') {
+        dataLifecycle = rotatePixieData(dataLifecycle, {
+          dataId: `${id}:DATA:POST_OFFICE:DRIVE:${(record.journeys || []).length + 1}`,
+          workId: id, checkpointId: record.checkpointId, producer: 'POST_OFFICE',
+          kind: 'DELIVERY_RECEIPT',
+          payloadRef: `post-office://${external.receiptId}`,
+          evidenceRefs: [external.evidenceRef], ownerSystem: record.ownerSystem,
+          truthOwner: record.ownerSystem, createdAt: now,
+        });
+      }
+    }
+    const next={...record,state:WORK_STATE.HANDED_OFF,handoff,
+      ...(outboundPostal ? { outboundPostal: clone(outboundPostal) } : {}),
+      stationReturnReview:null,journeys:[...(record.journeys||[]),journey],reports,dataLifecycle,
       history:[...record.history,{state:WORK_STATE.HANDED_OFF,journeyId:journey.journeyId,at:now}],updatedAt:now};
     await store.put(`work:${id}`,next); return clone(next);
   }
