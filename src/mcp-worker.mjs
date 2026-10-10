@@ -90,6 +90,7 @@ export function createGateway({ env, storage, sourceSha = SOURCE_SHA } = {}) {
     const factoryStation = createFactoryStationRuntime({
       baseUrl: env.FACTORY_RUNTIME_URL,
       sharedSecret: env.METROPOLIS_FACTORY_SHARED_SECRET,
+      ...(env.FACTORY_SERVICE?.fetch ? {fetchImpl:(url,init)=>env.FACTORY_SERVICE.fetch(new Request(url,init))} : {}),
     });
     const tabletRuntime = createTabletRuntime({
       bucket: env.TABLET_STORAGE,
@@ -108,6 +109,9 @@ export function createGateway({ env, storage, sourceSha = SOURCE_SHA } = {}) {
       stationRuntimes: { FACTORY_STATION: {
         handoff: input => conveyor.factory.handoff(input),
         readback: input => conveyor.factory.readback(input),
+      }, OBSERVATORY_STATION: {
+        handoff: input => conveyor.observation.handoff(input),
+        readback: input => conveyor.observation.readback(input),
       } },
       tabletRuntime,
     });
@@ -160,7 +164,6 @@ export function createGateway({ env, storage, sourceSha = SOURCE_SHA } = {}) {
           { 'www-authenticate': `Bearer resource_metadata="${resourceMetadataUrl}"` },
         );
       }
-      if (principal.actor !== 'GO') return json({ reason: 'GO_REQUIRED' }, 403);
       if (!request.headers.get('content-type')?.startsWith('application/json')) {
         return json({ reason: 'CONTENT_TYPE_REQUIRED' }, 415);
       }

@@ -20,9 +20,9 @@ export function createFactoryStationRuntime({ baseUrl, sharedSecret, fetchImpl =
 
   async function handoff({ workId, checkpointId, operation, payload = {} } = {}) {
     const probe = await adapter.probe({ station, rail });
-    if (probe.status !== READY) throw new Error('FACTORY_STATION_NOT_READY');
+    if (probe.status !== READY) throw Object.assign(new Error('FACTORY_STATION_NOT_READY'),{notSent:true});
     const sourceSha = text(probe.runtime?.sourceSha);
-    if (!/^[a-f0-9]{40}$/.test(sourceSha)) throw new Error('FACTORY_SOURCE_SHA_UNVERIFIED');
+    if (!/^[a-f0-9]{40}$/.test(sourceSha)) throw Object.assign(new Error('FACTORY_SOURCE_SHA_UNVERIFIED'),{notSent:true});
 
     const transportPayload = {
       ...payload,
@@ -38,7 +38,8 @@ export function createFactoryStationRuntime({ baseUrl, sharedSecret, fetchImpl =
     const transport = { payload: transportPayload };
     // Authenticate and validate the exact Work Pass at Factory before dispatch.
     // A failed preflight must not alter City Work or create a Factory receipt.
-    await adapter.preflight({ transport });
+    try { await adapter.preflight({ transport }); }
+    catch(error){throw Object.assign(error,{notSent:true});}
     const receipt = await adapter.dispatch({ transport });
     const readback = await adapter.readback({ receipt, transport });
     if (!readback.verified) throw new Error('FACTORY_BOUNDARY_READBACK_FAILED');

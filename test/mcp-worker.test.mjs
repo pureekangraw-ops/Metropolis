@@ -280,7 +280,7 @@ test('Observatory pairing requires authenticated GO and explicit existing READ W
     body: JSON.stringify({ workId: work.workId }),
   }));
   assert.equal(light.status, 403);
-  assert.equal((await light.json()).reason, 'GO_REQUIRED');
+  assert.equal((await light.json()).reason, 'NO_GRANT');
 
   const goToken = await accessToken('GO');
   const paired = await gateway.fetch(new Request(origin + '/observatory/pair', {
@@ -365,13 +365,13 @@ test('Observatory observation queues through Greenhouse and verifies destination
   assert.equal(read.body.result.structuredContent.record.state, 'RECEIVED');
 });
 
-test('Observatory observation rejects LIGHT, non-Observatory Work, and missing READ', async () => {
+test('Observatory observation rejects another actor without a Work grant, non-Observatory Work, and missing READ', async () => {
   const durable = storage();
   const gateway = createGateway({ env: { ...env, MCP_WORK_GRANTS: '[]' }, storage: durable, sourceSha: 'a'.repeat(40) });
   const work = await createObservatoryWork(gateway);
   const light = await call(gateway, 'metropolis_observatory_observe', { workId: work.workId, view: 'browser' }, 'LIGHT');
   assert.equal(light.body.result.isError, true);
-  assert.equal(light.body.result.structuredContent.reason, 'GO_REQUIRED');
+  assert.equal(light.body.result.structuredContent.reason, 'NO_GRANT');
 
   const restricted = createGateway({
     env: { ...env, MCP_WORK_GRANTS: JSON.stringify([{ actor: 'GO', action: 'handoff', workId: work.workId, stationId: '*', operation: '*' }]) },
@@ -451,4 +451,20 @@ test('gateway accepts the full explicit Work action set used by LIGHT', async ()
   assert.equal(health.status, 200);
   const body = await health.json();
   assert.equal(body.status, 'READY');
+});
+
+
+test('existing Work handoff routes read-only Observatory jobs through the same Greenhouse queue',async()=>{
+ let envelope;
+ const gateway=createGateway({env:{...env,MCP_WORK_GRANTS:'[]',METROPOLIS_GREENHOUSE_RAIL_SECRET:'test-rail',
+  GREENHOUSE_TRANSPORT:{async fetch(request){envelope=await request.json();return new Response(JSON.stringify({...envelope,status:'QUEUED'}),{status:202});}}},storage:storage(),sourceSha:'a'.repeat(40)});
+ const work=await createObservatoryWork(gateway);
+ const queued=await call(gateway,'metropolis_work',{action:'handoff',workId:work.workId,
+  payload:{stationId:'OBSERVATORY_STATION',operation:'observe',payload:{view:'browser'}}});
+ assert.equal(queued.body.result.isError,false);
+ assert.equal(queued.body.result.structuredContent.job.jobId,envelope.attemptId);
+ assert.equal(envelope.workId,work.workId);assert.equal(envelope.stationId,'OBSERVATORY_STATION');
+ const command=await call(gateway,'metropolis_work',{action:'handoff',workId:work.workId,
+  payload:{stationId:'OBSERVATORY_STATION',operation:'click',payload:{view:'browser'}}});
+ assert.equal(command.body.result.structuredContent.reason,'DESTINATION_NOT_GRANTED');
 });

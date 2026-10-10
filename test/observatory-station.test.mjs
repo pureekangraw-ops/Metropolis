@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {createWorkPass} from '../src/work-pass.mjs';
 import { createObservatoryStation } from '../src/observatory-station.mjs';
 
 function storage() {
@@ -11,8 +12,8 @@ function storage() {
   };
 }
 
-function runtime({ ownerSystem = 'OBSERVATORY', state = 'RECEIVED' } = {}) {
-  const work = { workId: 'W-OBS', checkpointId: 'CP-01', ownerSystem, state };
+function runtime({ ownerSystem = 'OBSERVATORY', state = 'RECEIVED',actor='GO' } = {}) {
+  const work = { workId: 'W-OBS', checkpointId: 'CP-01', ownerSystem, state,workPass:createWorkPass({workId:'W-OBS',checkpointId:'CP-01',actor}) };
   return { async getWork(workId) { return workId === work.workId ? structuredClone(work) : null; } };
 }
 
@@ -83,7 +84,7 @@ test('Station refuses mismatched identity, Work owner, and closed Work', async (
     storage: storage(),
     runtime: runtime(),
   });
-  await assert.rejects(station.pair({ actor: 'LIGHT', workId: 'W-OBS' }), /GO_REQUIRED/);
+  await assert.rejects(station.pair({ actor: 'LIGHT', workId: 'W-OBS' }), /NO_GRANT/);
   const wrongOwner = createObservatoryStation({
     env: { MCP_PUBLIC_ORIGIN: 'https://city.example' },
     storage: storage(),
@@ -189,4 +190,11 @@ test('readback requires a paired device and a fresh capture', async () => {
     checkpointId: 'CP-01',
     view: 'map',
   }), /STALE_CAPTURE/);
+});
+test('LIGHT can pair and observe its own Work Pass without GO identity',async()=>{
+ const station=createObservatoryStation({env:{MCP_PUBLIC_ORIGIN:'https://city.example'},storage:storage(),runtime:runtime({actor:'LIGHT'})});
+ const pair=await station.pair({actor:'LIGHT',workId:'W-OBS'});
+ await station.publish({deviceId:pair.deviceId,token:pair.token,view:'browser',snapshot:snapshot('browser')});
+ const observed=await station.observe({actor:'LIGHT',workId:'W-OBS',view:'browser'});
+ assert.equal(observed.receipt.actor,'LIGHT');assert.equal(observed.readbackVerified,true);
 });

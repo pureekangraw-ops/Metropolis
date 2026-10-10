@@ -158,7 +158,7 @@ const tools = [
   {
     name: 'metropolis_observatory_observe',
     title: 'Observe Observatory through Metropolis',
-    description: 'Read a fresh Observatory browser or map snapshot through the authorized Metropolis Station. Requires GO identity and READ on an OBSERVATORY Work. This is observation only; it does not execute commands or grant authority.',
+    description: 'Queue a fresh Observatory browser or map observation through Greenhouse using READ on this OBSERVATORY Work. Returns Job ID and delivery status. Observation does not execute browser commands.',
     inputSchema: observatoryObserveInputSchema,
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     securitySchemes: oauthSecurity,
@@ -228,6 +228,10 @@ function passActions(record, actor) {
   }).actions;
 }
 function destinationAllowed(record, actor, explicit, payload = {}) {
+  // Existing per-Work read authority can schedule observation, never browser commands.
+  if(record?.ownerSystem==='OBSERVATORY'&&payload.stationId==='OBSERVATORY_STATION'&&
+    payload.operation==='observe'&&['browser','map'].includes(payload.payload?.view))
+    return (explicit.length ? explicit.some(g=>g.action==='read') : passActions(record,actor).includes('read'));
   if (explicit.length > 0) {
     return explicit.some(grant => grant.action === 'handoff'
       && (grant.stationId === '*' || grant.stationId === payload.stationId)
@@ -382,7 +386,6 @@ export function createMetropolisMcp({
     if (name === 'metropolis_observatory_observe') {
       try {
         if (!schemaMatches(args, observatoryObserveInputSchema)) throw new Error('INVALID_ARGUMENT');
-        if (actor !== 'GO') throw new Error('GO_REQUIRED');
         if (typeof observatoryObserve !== 'function') throw new Error('STATION_UNAVAILABLE');
         const workId = required(args.workId, 'workId');
         const view = required(args.view, 'view');

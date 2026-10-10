@@ -1,4 +1,5 @@
 import { hash, json } from './shared-mcp.mjs';
+import {inspectWorkPass} from './work-pass.mjs';
 
 const STATION_ID = 'OBSERVATORY_STATION';
 const MAX_SNAPSHOT_BYTES = 48 * 1024;
@@ -104,12 +105,15 @@ export function createObservatoryStation({ env = {}, storage, runtime, clock = (
   const sessionKey = deviceId => `observatory:device:${deviceId}`;
 
   async function boundWork(actor, workId, checkpointId = null) {
-    if (actor !== 'GO') fail('GO_REQUIRED');
     const work = await runtime.getWork(workId);
     if (!work) fail('WORK_NOT_FOUND');
     if (work.ownerSystem !== 'OBSERVATORY') fail('WORK_OWNER_MISMATCH');
     if (checkpointId && work.checkpointId !== checkpointId) fail('CHECKPOINT_MISMATCH');
     if (['CANCELLED', 'COMPLETED'].includes(String(work.state || '').toUpperCase())) fail('WORK_CLOSED');
+    const explicit=JSON.parse(env.MCP_WORK_GRANTS||'[]').filter(g=>g.actor===actor&&g.workId===work.workId);
+    const readable=explicit.length?explicit.some(g=>g.action==='read'):inspectWorkPass(work.workPass,
+      {actor,workId:work.workId,checkpointId:work.checkpointId,workState:work.state}).actions.includes('read');
+    if(!readable)fail('NO_GRANT');
     return work;
   }
 

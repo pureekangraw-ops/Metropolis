@@ -70,7 +70,7 @@ export function createGreenhouseConveyor({env, storage, runtime, factory, observ
         receiptRef:external.receiptId,evidenceRef:external.evidenceRef,domainCompleted:false};
       await storage.put(key(attemptId),{...job,status:'READBACK_VERIFIED',result,external,readbackAt:clock()});
       // The Work record remains in City Hall. Queue state never completes a Work.
-      if(job.stationId==='FACTORY_STATION') await storage.put('work:'+job.workId,{...work,
+      if(work.handoff?.external?.jobId===attemptId) await storage.put('work:'+job.workId,{...work,
         handoff:{...work.handoff,external:{...external,jobId:attemptId,attemptId,status:'READBACK_VERIFIED'}},updatedAt:clock()});
       else await storage.put('work:'+job.workId,{...work,stationJobs:[...(work.stationJobs||[]).filter(x=>x.jobId!==attemptId),
         {jobId:attemptId,stationId:job.stationId,status:'READBACK_VERIFIED',receiptId:external.receiptId,evidenceRef:external.evidenceRef,stationResult:external.stationResult}],updatedAt:clock()});
@@ -78,7 +78,7 @@ export function createGreenhouseConveyor({env, storage, runtime, factory, observ
     }catch(error){
       // Only errors that provably precede destination execution may be retried.
       const safe=new Set(['DEVICE_NOT_PAIRED','STALE_CAPTURE','READBACK_CONTEXT_MISMATCH','WORK_OWNER_MISMATCH','VIEW_INVALID']);
-      const notSent=job.stationId==='OBSERVATORY_STATION'&&safe.has(error.message);
+      const notSent=(job.stationId==='OBSERVATORY_STATION'&&safe.has(error.message))||error.notSent===true;
       await storage.put(key(attemptId),{...job,status:notSent?'WAITING_ROUTE':'OUTCOME_UNKNOWN',reason:error.message,dispatchedAt:clock()});
       return notSent?{notSent:true,reason:error.message}:{accepted:false,reason:'DISPATCH_READBACK_REQUIRED'};
     }
@@ -86,6 +86,14 @@ export function createGreenhouseConveyor({env, storage, runtime, factory, observ
   return {
     factory:{handoff:enqueue,readback:async input=> input.handoff?.external?.status==='READBACK_VERIFIED'
       ? factory.readback(input) : {verified:false,reason:'GREENHOUSE_JOB_PENDING',jobId:input.handoff?.external?.jobId}},
+    observation:{
+      handoff:enqueue,
+      async readback({handoff}){
+        const job=await storage.get(key(handoff?.external?.jobId));
+        return job?.result?{verified:true,domainVerified:true,evidenceRef:job.result.evidenceRef,result:job.external.stationResult}
+          : {verified:false,reason:'GREENHOUSE_JOB_PENDING',jobId:handoff?.external?.jobId};
+      },
+    },
     async observe(input){
       const work=await runtime.getWork(input.workId);
       const queued=await enqueue({...input,stationId:'OBSERVATORY_STATION',operation:'observe',payload:{view:input.view,workPassRef:work.workPassRef}});
@@ -101,7 +109,16 @@ export function createGreenhouseConveyor({env, storage, runtime, factory, observ
       const job=await storage.get(key(input.attemptId));
       if(!job||['workId','checkpointId','stationId','operation','actor'].some(k=>input[k]!==job[k])||input.workPassRef!==job.payload.workPassRef)
         return json({notSent:true,reason:'CITY_JOB_SCOPE_MISMATCH'},403);
-      if(new URL(request.url).pathname==='/station/readback')return json(job.result||{accepted:false,status:job.status,reason:job.reason||'DESTINATION_READBACK_PENDING'});
+      if(new URL(request.url).pathname==='/station/readback'){
+        if(job.result)return json(job.result);
+        // These legacy errors were produced strictly before /station/receive.
+        const beforeSend=['FACTORY_STATION_NOT_CONFIGURED','FACTORY_STATION_NOT_READY','FACTORY_SOURCE_SHA_UNVERIFIED'];
+        if(job.status==='WAITING_ROUTE'||(job.status==='OUTCOME_UNKNOWN'&&beforeSend.includes(job.reason))){
+          await storage.put(key(job.attemptId),{...job,status:'WAITING_ROUTE'});
+          return json({notSent:true,reason:job.reason||'DESTINATION_NOT_READY'});
+        }
+        return json({accepted:false,status:job.status,reason:job.reason||'DESTINATION_READBACK_PENDING'});
+      }
       return json(await dispatch(input.attemptId));
     },
   };
