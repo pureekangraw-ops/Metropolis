@@ -36,7 +36,7 @@ export function createGreenhouseFactoryTransit({factory,service,sharedSecret,onl
       intake.data?.checkpointId!==input.checkpointId||
       intake.data?.attemptId!==attemptId||
       intake.data?.duplicate===true||
-      !['QUEUED','WAITING_QUEUE','PENDING_QUEUE'].includes(intake.data?.status))
+      !['QUEUED','WAITING_QUEUE','PENDING_QUEUE','WAITING_ROUTE'].includes(intake.data?.status))
      throw new Error(intake.data?.duplicate===true?'GREENHOUSE_EXISTING_ATTEMPT_VERIFY_FIRST':'GREENHOUSE_INTAKE_UNVERIFIED');
    // Factory preflight, HMAC transport and Work Pass validation remain authoritative.
    const factoryResult=await factory.handoff(input);

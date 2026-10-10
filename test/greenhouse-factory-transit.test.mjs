@@ -10,7 +10,7 @@ function scenario(opts={}){
   if(seen.length===1){
    if(opts.duplicate)return Response.json({workId,checkpointId,attemptId:payload.attemptId,status:'QUEUED',duplicate:true},{status:202});
    if(opts.down)return Response.json({reason:'UNAVAILABLE'},{status:503});
-   return Response.json({workId,checkpointId,attemptId:payload.attemptId,status:'QUEUED',duplicate:false},{status:202});
+   return Response.json({workId,checkpointId,attemptId:payload.attemptId,status:opts.consumed?'WAITING_ROUTE':'QUEUED',duplicate:false},{status:202});
   }
   return Response.json({workId,checkpointId,attemptId:payload.attemptId,status:'READBACK_VERIFIED',
    receiptRef:payload.receiptRef,evidenceRef:payload.evidenceRef});
@@ -56,4 +56,11 @@ test('non-pilot Work remains on existing trusted rail',async()=>{
  const x=scenario();
  await x.adapter.handoff({...x.input,workId:'WORK-unrelated'});
  assert.equal(x.seen.length,0);assert.equal(x.factoryCalls.length,1);
+});
+
+test('PIXIE queue consumer may mark WAITING_ROUTE before City sees intake response',async()=>{
+ const x=scenario({consumed:true});
+ const reply=await x.adapter.handoff(x.input);
+ assert.equal(reply.greenhouse.verified,true);
+ assert.equal(x.factoryCalls.length,1);
 });
