@@ -198,3 +198,21 @@ test('LIGHT can pair and observe its own Work Pass without GO identity',async()=
  const observed=await station.observe({actor:'LIGHT',workId:'W-OBS',view:'browser'});
  assert.equal(observed.receipt.actor,'LIGHT');assert.equal(observed.readbackVerified,true);
 });
+
+test('tool can pair and publish without creating a Work', async () => {
+  const store = storage();
+  const station = createObservatoryStation({
+    env: { MCP_PUBLIC_ORIGIN: 'https://city.example' },
+    storage: store,
+    runtime: {async getWork() { throw new Error('SHOULD_NOT_CREATE_OR_LOOKUP_WORK'); }},
+  });
+  const pair = await station.pair({actor: 'GO'});
+  assert.equal(pair.toolPairing, true);
+  const accepted = await station.publish({
+    deviceId: pair.deviceId, token: pair.token, view: 'browser', snapshot: snapshot('browser'),
+  });
+  assert.equal(accepted.accepted, true);
+  assert.deepEqual(await station.disconnect({deviceId: pair.deviceId, token: pair.token}), {
+    disconnected: true, stationId: 'OBSERVATORY_STATION',
+  });
+});

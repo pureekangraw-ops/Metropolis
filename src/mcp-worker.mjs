@@ -177,8 +177,15 @@ export function createGateway({ env, storage, sourceSha = SOURCE_SHA } = {}) {
         return json({ reason: 'INVALID_ARGUMENT' }, 400);
       }
       if (!body || typeof body !== 'object' || Array.isArray(body)
-        || Object.keys(body).length !== 1 || typeof body.workId !== 'string' || !body.workId.trim()) {
+        || Object.keys(body).some(key => key !== 'workId')
+        || (body.workId != null && (typeof body.workId !== 'string' || !body.workId.trim()))) {
         return json({ reason: 'INVALID_ARGUMENT' }, 400);
+      }
+      // Tool identity pairing is independent of Work creation. Work-specific reads
+      // still require the existing authorized Work Pass.
+      if (body.workId == null) {
+        try { return json(await observatory.pair({actor: principal.actor})); }
+        catch { return json({reason: 'OBSERVATORY_PAIR_FAILED'}, 400); }
       }
       const workId = body.workId.trim();
       const work = await runtime.getWork(workId);
