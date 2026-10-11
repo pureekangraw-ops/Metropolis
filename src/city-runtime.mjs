@@ -13,6 +13,7 @@ import { createStationJourney, closeStationJourney, normalizeJourneyBaggage } fr
 import { createHermesIntakeDesk } from './agents/hermes/intake-desk.mjs';
 import { cancelWorkPass, completeWorkPass, createWorkPass, workPassRef } from './work-pass.mjs';
 import { createWorkStateSignalLine, WORK_SIGNAL_STATUS } from './work-state-signal.mjs';
+import { createToolSignalLine } from './tool-signal-line.mjs';
 
 export const CITY_COMPONENTS = Object.freeze(['METROPOLIS', 'CITY_HALL', 'WORK_SYSTEM', 'POST_OFFICE', 'PIXIE_SERVICE', 'SHOP', 'SPECTRUMSALE', 'THE_TAILOR']);
 export const WORK_STATE = Object.freeze({RECEIVED:'RECEIVED',HANDED_OFF:'HANDED_OFF',RETURN_REVIEW:'RETURN_REVIEW',RETURNED:'RETURNED',COMPLETED:'COMPLETED',CANCELLED:'CANCELLED',UNKNOWN:'UNKNOWN'});
@@ -56,6 +57,7 @@ export function createCityRuntime({ store = createMemoryStore(), clock = () => n
   const mailboxes = new Map();
   const stations = Object.freeze({ ...stationRuntimes });
   const workStateSignals = createWorkStateSignalLine({ store, clock });
+  const toolSignals = createToolSignalLine({ store, clock });
 
   async function intake({ workId = idFactory(), checkpointId, ownerSystem, requestedBy = 'UNKNOWN', workPassActor = null, inputRefs = [], intakeDraftId = null, intakeInformation = {} } = {}) {
     const id = text(workId, 'workId');
@@ -292,5 +294,5 @@ export function createCityRuntime({ store = createMemoryStore(), clock = () => n
 
   async function health() { return { service: 'metropolis', status: 'READY', sourceSha, components: Object.fromEntries(CITY_COMPONENTS.map((component) => [component, { status: 'READY' }])), mailboxCount: [...mailboxes.values()].filter((mailbox) => mailbox.status === MAILBOX_STATUS.OPEN).length, observedAt: clock() }; }
 
-  return Object.freeze({ intake, resumeWork, handoff, returnWork, cancelWork, completeWork, registerMailbox, sendCargo, getWork, listWorks, getWorkSignal, listWorkSignals, listWorkSignalHistory, reception, health, map: createCityMap() });
+  return Object.freeze({ intake, resumeWork, handoff, returnWork, cancelWork, completeWork, registerMailbox, sendCargo, getWork, listWorks, getWorkSignal, listWorkSignals, listWorkSignalHistory, toolSignals, reception, health, map: createCityMap() });
 }
