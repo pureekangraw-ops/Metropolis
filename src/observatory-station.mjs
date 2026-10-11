@@ -286,6 +286,27 @@ export function createObservatoryStation({ env = {}, storage, runtime, clock = (
     return { disconnected: true, stationId: STATION_ID };
   }
 
+  // Single-slot live eye: no history, no Work creation and no receipts on read.
+  async function latest({actor,workId,view='browser'}={}) {
+    if (!['browser','map'].includes(view)) fail('VIEW_INVALID');
+    const work = await boundWork(actor,workId);
+    const link = await storage.get(workKey(work.workId));
+    if (!link?.deviceId) return {status:'OFFLINE',view};
+    const session = await storage.get(sessionKey(link.deviceId));
+    if (!session?.active) return {status:'OFFLINE',view};
+    const key = snapshotKey(work.workId,view);
+    const record = await storage.get(key);
+    if (!record?.snapshot) return {status:'WAITING',view};
+    const ageMs = clock() - record.acceptedAtEpochMs;
+    if (!Number.isFinite(ageMs) || ageMs > 30000) {
+      if (storage.delete) await storage.delete(key);
+      else await storage.put(key,null);
+      return {status:'OFFLINE',view};
+    }
+    if (ageMs > 10000) return {status:'STALE',view,observedAtEpochMs:record.acceptedAtEpochMs};
+    return {status:'LIVE',view,observedAtEpochMs:record.acceptedAtEpochMs,snapshot:record.snapshot};
+  }
+
   async function fetch(request) {
     const url = new URL(request.url);
     if (url.origin !== origin) return json({ reason: 'ORIGIN_MISMATCH' }, 403);
@@ -322,5 +343,5 @@ export function createObservatoryStation({ env = {}, storage, runtime, clock = (
     }
   }
 
-  return Object.freeze({ pair, publish, observe, disconnect, fetch });
+  return Object.freeze({ pair, publish, observe, disconnect, latest, fetch });
 }
