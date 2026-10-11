@@ -298,7 +298,7 @@ export function createObservatoryStation({ env = {}, storage, runtime, clock = (
     const record = await storage.get(key);
     if (!record?.snapshot) return {status:'WAITING',view};
     const ageMs = clock() - record.acceptedAtEpochMs;
-    if (!Number.isFinite(ageMs) || ageMs > 30000) {
+    if (!Number.isFinite(ageMs) || ageMs > 15000) {
       if (storage.delete) await storage.delete(key);
       else await storage.put(key,null);
       return {status:'OFFLINE',view};
