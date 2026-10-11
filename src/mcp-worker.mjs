@@ -5,7 +5,7 @@ import { SOURCE_SHA } from './mcp-source-identity.mjs';
 import { createFactoryStationRuntime } from './factory-station-runtime.mjs';
 import { createTabletRuntime } from './tablet-runtime.mjs';
 import { createObservatoryStation } from './observatory-station.mjs';
-import { createGreenhouseConveyor } from './greenhouse-conveyor.mjs';
+import { railRequest, verifyRail, createGreenhouseConveyor } from './greenhouse-conveyor.mjs';
 import { inspectWorkPass } from './work-pass.mjs';
 
 export async function bufferRequest(request, { timeoutMs = 10000, maxBytes = 65536 } = {}) {
@@ -134,6 +134,7 @@ export function createGateway({ env, storage, sourceSha = SOURCE_SHA } = {}) {
       grants,
       allowedActors: [...allowedActors],
       observatoryObserve: input => conveyor.observe(input),
+      observatoryMemory: input => observatory.memory(input),
       jobStatus:work=>conveyor.jobStatus(work),
       allowedOrigins: [cfg.issuer, 'https://chatgpt.com', ...JSON.parse(env.MCP_ALLOWED_ORIGINS || '[]')],
       authenticate: authenticateMcp,
@@ -151,6 +152,15 @@ export function createGateway({ env, storage, sourceSha = SOURCE_SHA } = {}) {
     const url = new URL(request.url);
     if (url.pathname === '/health') return json({ service: 'METROPOLIS_MCP', version: '1.0.0', sourceSha, status: configured ? 'READY' : 'NOT_CONFIGURED', persistentStorage: Boolean(storage), observedAt: new Date().toISOString(), ownerSystemsVerified: false }, configured ? 200 : 503);
     if (!configured) return json({ reason: 'METROPOLIS_MCP_NOT_CONFIGURED' }, 503);
+    if (url.pathname === '/station/observatory-ingest') {
+      if(request.method!=='POST')return json({reason:'METHOD_NOT_ALLOWED'},405);
+      const raw=await request.text();
+      if(new TextEncoder().encode(raw).length>65536)return json({reason:'BODY_TOO_LARGE'},413);
+      if(!await verifyRail(request,env.METROPOLIS_GREENHOUSE_RAIL_SECRET,raw))return json({reason:'RAIL_SIGNATURE_INVALID'},401);
+      let input;try{input=JSON.parse(raw);}catch{return json({reason:'INVALID_ARGUMENT'},400);}
+      if(!/^\/observatory\/device\/[a-f0-9-]{36}\/(snapshot|stop|memory)$/.test(input.path)||typeof input.token!=='string'||typeof input.body!=='string')return json({reason:'INVALID_ARGUMENT'},400);
+      return observatory.fetch(new Request(env.MCP_PUBLIC_ORIGIN+input.path,{method:'POST',body:input.body,headers:{'content-type':'application/json',authorization:'Bearer '+input.token}}));
+    }
     if (['/station/dispatch','/station/readback'].includes(url.pathname)) return conveyor.fetch(request);
     if (url.origin !== env.MCP_PUBLIC_ORIGIN) return json({ reason: 'ORIGIN_MISMATCH' }, 403);
     if (url.pathname.startsWith('/tool-signal/')) {
@@ -260,6 +270,9 @@ export function createGateway({ env, storage, sourceSha = SOURCE_SHA } = {}) {
 
 export class MetropolisEntry {
   constructor(state, env) { this.state = state; this.env = env; }
+  async alarm() {
+    return this.state.blockConcurrencyWhile(()=>createObservatoryStation({env:this.env,storage:this.state.storage,runtime:{getWork:async()=>null}}).cleanup());
+  }
   async fetch(request) {
     const buffered = await bufferRequest(request);
     // Serialize the complete operation: Work read/change/readback and OAuth token consumption.
@@ -276,6 +289,14 @@ export default {
     let buffered;
     try { buffered = await bufferRequest(request); }
     catch (error) { return json({ reason: error.message }, error.message === 'BODY_TIMEOUT' ? 408 : 413); }
+    const path=new URL(buffered.url).pathname;
+    if (/^\/observatory\/device\/[a-f0-9-]{36}\/(snapshot|stop|memory)$/.test(path)&&buffered.method==='POST') {
+      const token=buffered.headers.get('authorization')?.match(/^Bearer (.+)$/)?.[1];
+      if(!token)return json({reason:'AUTH_REQUIRED'},401);
+      try {return await railRequest(env.GREENHOUSE_TRANSPORT,env.METROPOLIS_GREENHOUSE_RAIL_SECRET,'/station/observatory-forward',{path,token,body:await buffered.text()});}
+      catch{return json({reason:'GREENHOUSE_UNREACHABLE'},503);}
+    }
     return env.METROPOLIS_ENTRY.get(env.METROPOLIS_ENTRY.idFromName('CITY_HALL_ENTRY')).fetch(buffered);
   },
 };
+

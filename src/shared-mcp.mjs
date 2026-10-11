@@ -42,6 +42,8 @@ const observatoryObserveInputSchema = Object.freeze({
   additionalProperties: false,
 });
 
+const observatoryMemoryInputSchema = Object.freeze({type:'object',properties:{action:{type:'string',enum:['history','preserve','list','read']},view:{type:'string',enum:['browser','map']},deviceId:string,captureIds:{type:'array',items:string,maxItems:4},label:string,savedId:string},required:['action'],additionalProperties:false});
+
 const receptionActionSchemas = {
   input_information: {
     type: 'object',
@@ -156,6 +158,14 @@ const tools = [
     securitySchemes: oauthSecurity,
   },
   {
+    name: 'metropolis_observatory_memory',
+    title: 'Observatory History and Saved Captures',
+    description: 'Read actor-owned rolling 15-second history, preserve selected captures or the current range permanently, list saved ranges, or retrieve a saved range. No Work creation is required. History is temporary; only preserve makes captures permanent.',
+    inputSchema: observatoryMemoryInputSchema,
+    annotations: {readOnlyHint:false,destructiveHint:false,openWorldHint:false},
+    securitySchemes:oauthSecurity,
+  },
+  {
     name: 'metropolis_observatory_observe',
     title: 'Observe Observatory through Metropolis',
     description: 'Queue a fresh Observatory browser or map observation through Greenhouse using READ on this OBSERVATORY Work. Returns Job ID and delivery status. Observation does not execute browser commands.',
@@ -258,6 +268,7 @@ export function createMetropolisMcp({
   version = '1.0.0',
   allowedOrigins = [],
   observatoryObserve,
+  observatoryMemory,
   jobStatus,
   appendDelegationAudit,
 } = {}) {
@@ -383,6 +394,13 @@ export function createMetropolisMcp({
         const known = /^(.*_REQUIRED|DRAFT_[A-Z0-9_]+|READY_[A-Z0-9_]+|OWNER_SYSTEM_REQUIRED|INFORMATION_INVALID|INPUT_REFS_INVALID|SEARCH_QUERY_REQUIRED|WORK_NOT_FOUND|WORK_CANCELLED|WORK_CLOSED|WORK_CLOSURE_BELONGS_TO_MIMIR|CANCEL_[A-Z0-9_]+|INVALID_ARGUMENT|INVALID_PAYLOAD|ACTION_NOT_FOUND)$/;
         return toolResult({ reason: known.test(error.message) ? error.message : 'RECEPTION_OPERATION_FAILED' }, true);
       }
+    }
+    if(name==='metropolis_observatory_memory'){
+      try{
+        if(!schemaMatches(args,observatoryMemoryInputSchema))throw new Error('INVALID_ARGUMENT');
+        if(typeof observatoryMemory!=='function')throw new Error('STATION_UNAVAILABLE');
+        return toolResult({actor,result:await observatoryMemory({...args,actor})});
+      }catch(error){return toolResult({reason:/^(NO_GRANT|DEVICE_NOT_PAIRED|CAPTURE_EXPIRED|SAVED_NOT_FOUND|INVALID_ARGUMENT|STATION_UNAVAILABLE)$/.test(error.message)?error.message:'OBSERVATORY_MEMORY_FAILED'},true);}
     }
     if (name === 'metropolis_observatory_observe') {
       try {
@@ -607,3 +625,4 @@ export function createMetropolisMcp({
     return json({ jsonrpc: '2.0', id: body.id, error: { code: -32601, message: 'Method not found' } });
   } });
 }
+
