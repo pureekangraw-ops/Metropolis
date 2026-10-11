@@ -153,6 +153,34 @@ export function createGateway({ env, storage, sourceSha = SOURCE_SHA } = {}) {
     if (!configured) return json({ reason: 'METROPOLIS_MCP_NOT_CONFIGURED' }, 503);
     if (['/station/dispatch','/station/readback'].includes(url.pathname)) return conveyor.fetch(request);
     if (url.origin !== env.MCP_PUBLIC_ORIGIN) return json({ reason: 'ORIGIN_MISMATCH' }, 403);
+    if (url.pathname.startsWith('/tool-signal/')) {
+      if (!['GET','POST'].includes(request.method)) return json({reason:'METHOD_NOT_ALLOWED'},405);
+      let principal;
+      try { principal = await authenticateMcp(request); }
+      catch { return json({reason:'AUTH_REQUIRED'},401,{'www-authenticate': `Bearer resource_metadata="${resourceMetadataUrl}"`}); }
+      const actor = principal.actor;
+      const allowed = new Set(['GO','LIGHT',...JSON.parse(env.MCP_TOOL_SIGNAL_ACTORS || '[]')]);
+      if (!allowed.has(actor)) return json({reason:'TOOL_SIGNAL_ACTOR_NOT_REGISTERED'},403);
+      const action = url.pathname.slice('/tool-signal/'.length);
+      try {
+        if (request.method === 'GET') {
+          if (action === 'presence') return json(await runtime.toolSignals.presence(url.searchParams.get('toolId')));
+          if (action === 'inbox') return json(await runtime.toolSignals.inbox({actor,toolId:actor}));
+          return json({reason:'ROUTE_NOT_FOUND'},404);
+        }
+        if (!request.headers.get('content-type')?.startsWith('application/json')) return json({reason:'CONTENT_TYPE_REQUIRED'},415);
+        const raw = await request.text();
+        if (new TextEncoder().encode(raw).length > 8192) return json({reason:'PAYLOAD_TOO_LARGE'},413);
+        const payload = JSON.parse(raw);
+        if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return json({reason:'INVALID_ARGUMENT'},400);
+        if (action === 'heartbeat') return json(await runtime.toolSignals.heartbeat({actor,toolId:actor,status:payload.status}));
+        if (action === 'send') return json(await runtime.toolSignals.send({actor,from:actor,to:payload.to,workId:payload.workId??null,checkpointId:payload.checkpointId??null,kind:payload.kind,body:payload.body,messageId:payload.messageId}));
+        return json({reason:'ROUTE_NOT_FOUND'},404);
+      } catch (error) {
+        const reason=String(error?.message||'TOOL_SIGNAL_FAILED');
+        return json({reason:/^[A-Z_]+$/.test(reason)?reason:'TOOL_SIGNAL_FAILED'},400);
+      }
+    }
     if (url.pathname === '/observatory/pair') {
       if (request.method !== 'POST') return json({ reason: 'METHOD_NOT_ALLOWED' }, 405);
       let principal;
