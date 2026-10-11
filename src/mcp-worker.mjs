@@ -181,6 +181,17 @@ export function createGateway({ env, storage, sourceSha = SOURCE_SHA } = {}) {
         return json({reason:/^[A-Z_]+$/.test(reason)?reason:'TOOL_SIGNAL_FAILED'},400);
       }
     }
+    if (url.pathname === '/observatory/latest') {
+      if (request.method !== 'GET') return json({reason:'METHOD_NOT_ALLOWED'},405);
+      let principal;
+      try { principal = await authenticateMcp(request); }
+      catch { return json({reason:'AUTH_REQUIRED'},401,{'www-authenticate': `Bearer resource_metadata="${resourceMetadataUrl}"`}); }
+      const workId=url.searchParams.get('workId');
+      const view=url.searchParams.get('view') || 'browser';
+      if (!workId) return json({reason:'WORK_ID_REQUIRED'},400);
+      try { return json(await observatory.latest({actor:principal.actor,workId,view})); }
+      catch(error) { return json({reason:String(error?.message||'OBSERVATORY_READ_FAILED')},403); }
+    }
     if (url.pathname === '/observatory/pair') {
       if (request.method !== 'POST') return json({ reason: 'METHOD_NOT_ALLOWED' }, 405);
       let principal;
