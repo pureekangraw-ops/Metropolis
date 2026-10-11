@@ -46,3 +46,25 @@ test('GOLDEN: invalid slot cannot reach other city records',async()=>{
   await assert.rejects(s.pixie.clear('../work:owner'),/PIXIE_SLOT_INVALID/);
   assert.equal(s.data.size,0);
 });
+
+test('GOLDEN: repeated delivery id does not refresh timestamp or duplicate cargo',async()=>{
+  const s=setup();
+  assert.equal((await s.pixie.acceptDelivery({slot:'eye:browser',deliveryId:'DEL-1',value:{sequence:1}})).status,'ACCEPTED');
+  s.advance(5000);
+  assert.equal((await s.pixie.acceptDelivery({slot:'eye:browser',deliveryId:'DEL-1',value:{sequence:1}})).status,'ALREADY_ACCEPTED');
+  assert.equal((await s.pixie.read('eye:browser')).ageMs,5000);
+  assert.equal(s.data.size,1);
+});
+test('GOLDEN: conflicting replay is rejected without overwriting evidence',async()=>{
+  const s=setup();
+  await s.pixie.acceptDelivery({slot:'eye:browser',deliveryId:'DEL-1',value:{sequence:1}});
+  await assert.rejects(s.pixie.acceptDelivery({slot:'eye:browser',deliveryId:'DEL-1',value:{sequence:2}}),/PIXIE_REPLAY_CONFLICT/);
+  assert.deepEqual((await s.pixie.read('eye:browser')).value,{sequence:1});
+});
+test('GOLDEN: newer delivery replaces previous snapshot in same slot',async()=>{
+  const s=setup();
+  await s.pixie.acceptDelivery({slot:'eye:browser',deliveryId:'DEL-1',value:{sequence:1}});
+  await s.pixie.acceptDelivery({slot:'eye:browser',deliveryId:'DEL-2',value:{sequence:2}});
+  assert.equal(s.data.size,1);
+  assert.deepEqual((await s.pixie.read('eye:browser')).value,{sequence:2});
+});
