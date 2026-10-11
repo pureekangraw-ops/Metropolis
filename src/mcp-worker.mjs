@@ -155,10 +155,10 @@ export function createGateway({ env, storage, sourceSha = SOURCE_SHA } = {}) {
     if (url.pathname === '/station/observatory-ingest') {
       if(request.method!=='POST')return json({reason:'METHOD_NOT_ALLOWED'},405);
       const raw=await request.text();
-      if(new TextEncoder().encode(raw).length>65536)return json({reason:'BODY_TOO_LARGE'},413);
+      if(new TextEncoder().encode(raw).length>131072)return json({reason:'BODY_TOO_LARGE'},413);
       if(!await verifyRail(request,env.METROPOLIS_GREENHOUSE_RAIL_SECRET,raw))return json({reason:'RAIL_SIGNATURE_INVALID'},401);
       let input;try{input=JSON.parse(raw);}catch{return json({reason:'INVALID_ARGUMENT'},400);}
-      if(!/^\/observatory\/device\/[a-f0-9-]{36}\/(snapshot|stop|memory)$/.test(input.path)||typeof input.token!=='string'||typeof input.body!=='string')return json({reason:'INVALID_ARGUMENT'},400);
+      if(!/^\/observatory\/device\/[a-f0-9-]{36}\/(snapshot|stop|memory)$/.test(input.path)||typeof input.token!=='string'||typeof input.body!=='string'||new TextEncoder().encode(input.body).length>65536)return json({reason:'INVALID_ARGUMENT'},400);
       return observatory.fetch(new Request(env.MCP_PUBLIC_ORIGIN+input.path,{method:'POST',body:input.body,headers:{'content-type':'application/json',authorization:'Bearer '+input.token}}));
     }
     if (['/station/dispatch','/station/readback'].includes(url.pathname)) return conveyor.fetch(request);
@@ -274,7 +274,7 @@ export class MetropolisEntry {
     return this.state.blockConcurrencyWhile(()=>createObservatoryStation({env:this.env,storage:this.state.storage,runtime:{getWork:async()=>null}}).cleanup());
   }
   async fetch(request) {
-    const buffered = await bufferRequest(request);
+    const buffered = await bufferRequest(request, {maxBytes:new URL(request.url).pathname==='/station/observatory-ingest'?131072:65536});
     // Serialize the complete operation: Work read/change/readback and OAuth token consumption.
     return this.state.blockConcurrencyWhile(async () => {
       try { return await createGateway({ env: this.env, storage: this.state.storage }).fetch(buffered); }
@@ -287,7 +287,7 @@ export default {
     if (!env.METROPOLIS_ENTRY) return json({ reason: 'DURABLE_BINDING_REQUIRED' }, 503);
     // Read untrusted network streams at the edge, before they can hold the shared object gate.
     let buffered;
-    try { buffered = await bufferRequest(request); }
+    try { buffered = await bufferRequest(request, {maxBytes:new URL(request.url).pathname==='/station/observatory-ingest'?131072:65536}); }
     catch (error) { return json({ reason: error.message }, error.message === 'BODY_TIMEOUT' ? 408 : 413); }
     const path=new URL(buffered.url).pathname;
     if (/^\/observatory\/device\/[a-f0-9-]{36}\/(snapshot|stop|memory)$/.test(path)&&buffered.method==='POST') {

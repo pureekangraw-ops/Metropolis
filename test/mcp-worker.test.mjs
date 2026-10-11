@@ -491,4 +491,7 @@ test('device ingress traverses Greenhouse before serialized Hall, and memory is 
   const saved=await call(gateway,'metropolis_observatory_memory',{action:'preserve',view:'browser'});
   const savedId=saved.body.result.structuredContent.result.id;assert.ok(savedId);
   const other=await call(gateway,'metropolis_observatory_memory',{action:'read',savedId},'LIGHT');assert.equal(other.body.result.isError,true);
+  const large={...snapshot,captureId:'escaped-capture',sequence:2,text:'"'.repeat(22000)};
+  const forwardedLarge=await edge.fetch(new Request(`${origin}/observatory/device/${pair.deviceId}/snapshot`,{method:'POST',headers:{authorization:'Bearer '+pair.token,'content-type':'application/json'},body:JSON.stringify({view:'browser',snapshot:large})}),liveEnv);
+  assert.equal(forwardedLarge.status,200,'a valid 48KiB snapshot must survive the signed JSON wrapper');
 });
