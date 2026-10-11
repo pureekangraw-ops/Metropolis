@@ -26,6 +26,7 @@ export function createToolSignalLine({store, clock=()=>new Date().toISOString(),
     if (!['MESSAGE','EVENT','ACK'].includes(kind)) throw new Error('TOOL_SIGNAL_KIND_INVALID');
     if (workId!==null&&!validId(workId)) throw new Error('WORK_ID_INVALID');
     if (checkpointId!==null&&!validId(checkpointId)) throw new Error('CHECKPOINT_ID_INVALID');
+    if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('TOOL_SIGNAL_BODY_INVALID');
     const encoded=JSON.stringify(body);
     if (!encoded||encoded.length>4096) throw new Error('TOOL_SIGNAL_BODY_TOO_LARGE');
     const key=PREFIX+'message:'+from+':'+messageId;
