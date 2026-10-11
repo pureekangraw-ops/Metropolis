@@ -71,7 +71,7 @@ export function createGreenhouseConveyor({env, storage, runtime, factory, observ
       if(external.verified!==true||!external.receiptId||!external.evidenceRef)throw new Error('DESTINATION_READBACK_UNVERIFIED');
       const result={accepted:true,verified:true,workId:job.workId,checkpointId:job.checkpointId,
         receiptRef:external.receiptId,evidenceRef:external.evidenceRef,domainCompleted:false};
-      await storage.put(key(attemptId),{...job,status:'READBACK_VERIFIED',result,external,readbackAt:clock()});
+      await storage.put(key(attemptId),{...job,status:'READBACK_VERIFIED',reason:null,notSent:false,result,external,readbackAt:clock()});
       // The Work record remains in City Hall. Queue state never completes a Work.
       if(work.handoff?.external?.jobId===attemptId) await storage.put('work:'+job.workId,{...work,
         handoff:{...work.handoff,external:{...external,jobId:attemptId,attemptId,status:'READBACK_VERIFIED'}},updatedAt:clock()});
@@ -94,7 +94,7 @@ export function createGreenhouseConveyor({env, storage, runtime, factory, observ
         const job=await storage.get(key(id));
         if(job?.workId===work.workId&&job.checkpointId===work.checkpointId)deliveries.push({jobId:id,
           workId:job.workId,checkpointId:job.checkpointId,stationId:job.stationId,operation:job.operation,
-          status:job.status,reason:job.reason||null,receiptRef:job.result?.receiptRef||null,
+          status:job.status,reason:job.result?.verified===true?null:(job.reason||null),receiptRef:job.result?.receiptRef||null,
           evidenceRef:job.result?.evidenceRef||null,deliveryVerified:job.result?.verified===true,
           workCompletion:'NOT_ASSERTED'});
       }
