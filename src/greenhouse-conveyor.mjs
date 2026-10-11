@@ -66,7 +66,7 @@ export function createGreenhouseConveyor({env, storage, runtime, factory, observ
       else if(job.stationId==='OBSERVATORY_STATION') {
         const observed=await observatory.observe({actor:job.actor,workId:job.workId,checkpointId:job.checkpointId,view:job.payload.view});
         external={verified:observed.readbackVerified===true,receiptId:observed.receipt.receiptId,
-          evidenceRef:'metropolis-station-receipt://'+observed.receipt.receiptId,stationResult:observed,domainVerified:true};
+          evidenceRef:'metropolis-station-receipt://'+observed.receipt.receiptId,stationResult:{receipt:observed.receipt,readbackVerified:observed.readbackVerified,captureId:observed.snapshot.captureId,expiresAt:observed.snapshot.capturedAtEpochMs+15000},domainVerified:true};
       } else throw new Error('STATION_UNAVAILABLE');
       if(external.verified!==true||!external.receiptId||!external.evidenceRef)throw new Error('DESTINATION_READBACK_UNVERIFIED');
       const result={accepted:true,verified:true,workId:job.workId,checkpointId:job.checkpointId,
@@ -139,3 +139,4 @@ export function createGreenhouseConveyor({env, storage, runtime, factory, observ
     },
   };
 }
+

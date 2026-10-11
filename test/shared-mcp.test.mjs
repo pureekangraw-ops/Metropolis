@@ -122,6 +122,7 @@ test('old room receives current schemas without creating another session', async
     'metropolis_reception',
     'metropolis_hermes_read',
     'metropolis_work',
+    'metropolis_observatory_memory',
     'metropolis_observatory_observe',
   ]);
   assert.equal(current.reception.intakeDesk.anchor, 'WORK_FLOW');
@@ -708,3 +709,4 @@ test('LIGHT has HERMES and persisted Work capability parity with GO while identi
   assert.equal(goRead.isError, true);
   assert.equal(goRead.structuredContent.reason, 'NO_GRANT');
 });
+

@@ -360,7 +360,9 @@ test('Observatory observation queues through Greenhouse and verifies destination
   assert.equal(confirmed.domainCompleted,false);
   const saved=await durable.get('greenhouse:job:'+job.attemptId);
   assert.equal(saved.external.stationResult.receipt.status,'READBACK_VERIFIED');
-  assert.equal(saved.external.stationResult.snapshot.url,'https://example.com/private');
+  assert.equal(saved.external.stationResult.snapshot,undefined);
+  assert.equal(saved.external.stationResult.captureId,snapshot.captureId);
+  assert.equal(saved.external.stationResult.expiresAt,snapshot.capturedAtEpochMs+15000);
   const read = await call(gateway, 'metropolis_work', { action: 'read', workId: work.workId });
   assert.equal(read.body.result.structuredContent.record.state, 'RECEIVED');
 });
@@ -467,4 +469,26 @@ test('existing Work handoff routes read-only Observatory jobs through the same G
  const command=await call(gateway,'metropolis_work',{action:'handoff',workId:work.workId,
   payload:{stationId:'OBSERVATORY_STATION',operation:'click',payload:{view:'browser'}}});
  assert.equal(command.body.result.structuredContent.reason,'DESTINATION_NOT_GRANTED');
+});
+
+
+test('device ingress traverses Greenhouse before serialized Hall, and memory is actor-scoped',async()=>{
+  const {default:edge}=await import('../src/mcp-worker.mjs');
+  const {railRequest}=await import('../src/greenhouse-conveyor.mjs');
+  const durable=storage();let hallBusy=false,forwarded=0;
+  const liveEnv={...env,MCP_WORK_GRANTS:'[]',METROPOLIS_GREENHOUSE_RAIL_SECRET:'test-rail'};
+  const gateway=createGateway({env:liveEnv,storage:durable,sourceSha:'a'.repeat(40)});
+  const token=await createTestAccessToken({issuer:origin,resource:origin+'/mcp',signingKey:env.MCP_OAUTH_SIGNING_KEY,subject:'GO',scope:'metropolis-go',clientId:'go'});
+  const paired=await gateway.fetch(new Request(origin+'/observatory/pair',{method:'POST',body:'{}',headers:{authorization:'Bearer '+token,'content-type':'application/json'}}));
+  const pair=await paired.json();
+  liveEnv.METROPOLIS_ENTRY={idFromName:()=>'',get:()=>({async fetch(r){assert.equal(hallBusy,false);hallBusy=true;try{return await gateway.fetch(r);}finally{hallBusy=false;}}})};
+  liveEnv.GREENHOUSE_TRANSPORT={async fetch(r){forwarded++;assert.equal(new URL(r.url).pathname,'/station/observatory-forward');return railRequest({fetch:r=>edge.fetch(r,liveEnv)},'test-rail','/station/observatory-ingest',await r.json());}};
+  const now=Date.now();const snapshot={schema:'observer.snapshot.v1',captureId:'edge-capture',revision:1,sequence:1,epoch:now,capturedAtEpochMs:now,tabId:'tab',url:'https://owner.example',title:'Owner',text:'Real fixture',targets:[],truncated:false};
+  const response=await edge.fetch(new Request(`${origin}/observatory/device/${pair.deviceId}/snapshot`,{method:'POST',headers:{authorization:'Bearer '+pair.token,'content-type':'application/json'},body:JSON.stringify({view:'browser',snapshot})}),liveEnv);
+  assert.equal(response.status,200);assert.equal((await response.json()).captureId,'edge-capture');assert.equal(forwarded,1);
+  const history=await call(gateway,'metropolis_observatory_memory',{action:'history',view:'browser'});
+  assert.equal(history.body.result.structuredContent.result.items[0].snapshot.text,'Real fixture');
+  const saved=await call(gateway,'metropolis_observatory_memory',{action:'preserve',view:'browser'});
+  const savedId=saved.body.result.structuredContent.result.id;assert.ok(savedId);
+  const other=await call(gateway,'metropolis_observatory_memory',{action:'read',savedId},'LIGHT');assert.equal(other.body.result.isError,true);
 });
