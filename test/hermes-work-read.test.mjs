@@ -107,3 +107,21 @@ test('HERMES fails closed on changed readback rather than reporting verified tru
   });
   await assert.rejects(() => reader.read({ actor: 'GO', workId: 'W-X' }), /READBACK_MISMATCH/);
 });
+
+
+test('HERMES exposes latest correlated station deliveries without treating receipt as Work completion', async () => {
+  const runtime = createCityRuntime({ store: createMemoryStore() });
+  await runtime.intake({ workId: 'W-OBS', ownerSystem: 'OBSERVATORY', workPassActor: 'GO' });
+  const before = await runtime.getWork('W-OBS');
+  let calls = 0;
+  const deliveries = [{ jobId: 'ATT-OBS', workId: 'W-OBS', checkpointId: before.checkpointId,
+    status: 'READBACK_VERIFIED', deliveryVerified: true, receiptRef: 'receipt-obs', workCompletion: 'NOT_ASSERTED' }];
+  const server = createMetropolisMcp({ runtime, authenticate: auth, allowedOrigins: [origin],
+    jobStatus: async work => { calls++; assert.equal(work.workId, 'W-OBS'); return deliveries; } });
+  const reply = await rpc(server, 'metropolis_hermes_read', { workId: 'W-OBS' });
+  assert.deepEqual(reply.structuredContent.deliveries, deliveries);
+  assert.equal(reply.structuredContent.ownerExecutionVerified, false);
+  assert.deepEqual(await runtime.getWork('W-OBS'), before);
+  await rpc(server, 'metropolis_hermes_read', { workId: 'W-OBS' }, 'light');
+  assert.equal(calls, 1, 'No delivery lookup for an unauthorized caller');
+});

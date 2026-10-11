@@ -56,3 +56,15 @@ test('missing Factory domain or scope is rejected before the queue receives a jo
  await assert.rejects(()=>x.conveyor.factory.handoff({...x.input,payload:{...x.input.payload,ownerDomain:undefined}}),/FACTORY_CARGO_INVALID/);
  assert.equal(x.envelope,undefined);assert.equal(x.calls,0);
 });
+
+
+test('verified delivery clears its earlier retry error instead of reporting contradictory status', async () => {
+ const x=fixture();const queued=await x.conveyor.factory.handoff(x.input);
+ x.rows.get('work:'+x.input.workId).handoff={external:queued};
+ const key='greenhouse:job:'+queued.jobId;
+ x.rows.set(key,{...x.rows.get(key),status:'WAITING_ROUTE',reason:'FACTORY_PREFLIGHT_UNAVAILABLE',notSent:true});
+ assert.equal((await (await x.invoke('/station/dispatch')).json()).verified,true);
+ const status=await x.conveyor.jobStatus(x.rows.get('work:'+x.input.workId));
+ assert.equal(status[0].status,'READBACK_VERIFIED');
+ assert.equal(status[0].reason,null);
+});
