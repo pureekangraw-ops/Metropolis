@@ -1,5 +1,6 @@
 // Greenhouse schedules delivery; City Hall retains authorization and owner receipts.
 import { inspectWorkPass, workPassAllowsHandoff } from './work-pass.mjs';
+import {DOCUMENT_OPERATIONS,validateDocumentOperation} from './document-stations.mjs';
 const encoder = new TextEncoder();
 const hex = bytes => [...bytes].map(x => x.toString(16).padStart(2, '0')).join('');
 const json = (value, status = 200) => new Response(JSON.stringify(value), {status, headers:{'content-type':'application/json','cache-control':'no-store'}});
@@ -18,22 +19,24 @@ export async function verifyRail(request, secret, body) {
   const key=await crypto.subtle.importKey('raw',encoder.encode(secret),{name:'HMAC',hash:'SHA-256'},false,['verify']);
   return crypto.subtle.verify('HMAC',key,new Uint8Array(signature.match(/../g).map(x=>parseInt(x,16))),encoder.encode(timestamp+'.'+body));
 }
-export function createGreenhouseConveyor({env, storage, runtime, factory, observatory, clock=()=>new Date().toISOString()}) {
+export function createGreenhouseConveyor({env, storage, runtime, factory, observatory, documents={}, clock=()=>new Date().toISOString()}) {
   const key = id => 'greenhouse:job:'+id;
   async function enqueue(input) {
+    if(DOCUMENT_OPERATIONS[input.stationId])validateDocumentOperation(input.stationId,input.operation,input.payload);
     if(input.stationId==='FACTORY_STATION'&&(!['CODE','VISUAL','LOGIC'].includes(input.payload.ownerDomain)||
       !Array.isArray(input.payload.scope)||!input.payload.scope.includes('EXECUTE:'+input.payload.ownerDomain)||
       typeof input.payload.intent!=='string'||!input.payload.intent.trim()))throw new Error('FACTORY_CARGO_INVALID');
     const seed=[input.workId,input.checkpointId,input.stationId,input.operation,input.payload.journeyId||crypto.randomUUID()].join('|');
     const attemptId='ATT-'+hex(new Uint8Array(await crypto.subtle.digest('SHA-256',encoder.encode(seed)))).slice(0,40);
+    const wire={workId:input.workId,checkpointId:input.checkpointId,stationId:input.stationId,operation:input.operation,
+      workPassRef:input.payload.workPassRef,actor:input.actor,attemptId,payload:input.payload};
+    if(DOCUMENT_OPERATIONS[input.stationId]&&JSON.stringify(wire).length>16384)
+      throw Object.assign(new Error('TOOL_CARGO_TOO_LARGE'),{notSent:true});
     // Save the City-approved request before enqueue. Never trust a queue's authority claims.
     const job={...structuredClone(input),attemptId,status:'PENDING_QUEUE',createdAt:clock()};
     await storage.put(key(attemptId),job);
     let response;
-    try { response=await railRequest(env.GREENHOUSE_TRANSPORT,env.METROPOLIS_GREENHOUSE_RAIL_SECRET,'/station/intake',{
-      workId:input.workId,checkpointId:input.checkpointId,stationId:input.stationId,operation:input.operation,
-      workPassRef:input.payload.workPassRef,actor:input.actor,attemptId,payload:input.payload,
-    }); } catch { throw new Error('GREENHOUSE_ENQUEUE_UNREACHABLE'); }
+    try { response=await railRequest(env.GREENHOUSE_TRANSPORT,env.METROPOLIS_GREENHOUSE_RAIL_SECRET,'/station/intake',wire); } catch { throw new Error('GREENHOUSE_ENQUEUE_UNREACHABLE'); }
     const reply=await response.json();
     if(!response.ok || reply.attemptId!==attemptId || reply.workId!==input.workId || reply.checkpointId!==input.checkpointId)
       throw new Error('GREENHOUSE_ENQUEUE_UNVERIFIED');
@@ -51,13 +54,14 @@ export function createGreenhouseConveyor({env, storage, runtime, factory, observ
     if(!work||work.checkpointId!==job.checkpointId||['CANCELLED','COMPLETED'].includes(work.state))
       return {notSent:true,reason:'WORK_NOT_ACTIVE'};
     const grants=JSON.parse(env.MCP_WORK_GRANTS||'[]').filter(g=>g.actor===job.actor&&g.workId===job.workId);
-    const allowed=job.stationId==='FACTORY_STATION'
+    const documentJob=Boolean(DOCUMENT_OPERATIONS[job.stationId]);
+    const allowed=(job.stationId==='FACTORY_STATION'||documentJob)
       ? (grants.length ? grants.some(g=>g.action==='handoff'&&[job.stationId,'*'].includes(g.stationId)&&[job.operation,'*'].includes(g.operation))
           : workPassAllowsHandoff(work.workPass,{workId:job.workId,checkpointId:job.checkpointId,actor:job.actor,workState:work.state,stationId:job.stationId}))
       : (grants.length ? grants.some(g=>g.action==='read')
           : inspectWorkPass(work.workPass,{workId:job.workId,checkpointId:job.checkpointId,actor:job.actor,workState:work.state}).actions.includes('read'));
     if(!allowed)return {notSent:true,reason:'WORK_AUTHORIZATION_REVOKED'};
-    if(job.stationId==='FACTORY_STATION' && work.handoff?.external?.jobId!==attemptId)
+    if((job.stationId==='FACTORY_STATION'||documentJob) && work.handoff?.external?.jobId!==attemptId)
       return {notSent:true,reason:'CITY_HANDOFF_NOT_COMMITTED'};
     await storage.put(key(attemptId),{...job,status:'DISPATCHING',dispatchedAt:clock()});
     try {
@@ -67,6 +71,17 @@ export function createGreenhouseConveyor({env, storage, runtime, factory, observ
         const observed=await observatory.observe({actor:job.actor,workId:job.workId,checkpointId:job.checkpointId,view:job.payload.view});
         external={verified:observed.readbackVerified===true,receiptId:observed.receipt.receiptId,
           evidenceRef:'metropolis-station-receipt://'+observed.receipt.receiptId,stationResult:{receipt:observed.receipt,readbackVerified:observed.readbackVerified,captureId:observed.snapshot.captureId,expiresAt:observed.snapshot.capturedAtEpochMs+15000},domainVerified:true};
+      } else if(documentJob) {
+        if(!documents[job.stationId]?.execute)throw Object.assign(new Error('DOCUMENT_STATION_NOT_CONNECTED'),{notSent:true});
+        const observed=await documents[job.stationId].execute(job);
+        if(observed.verified!==true)throw new Error('DESTINATION_READBACK_UNVERIFIED');
+        const snapshotHash=hex(new Uint8Array(await crypto.subtle.digest('SHA-256',encoder.encode(JSON.stringify(observed.data)))));
+        const receiptId=crypto.randomUUID();
+        const receipt={kind:'METROPOLIS_STATION_RECEIPT_V1',receiptId,stationId:job.stationId,operation:job.operation,
+          actor:job.actor,workId:job.workId,checkpointId:job.checkpointId,attemptId,snapshotHash,
+          observedAt:observed.observedAt,status:'READBACK_VERIFIED',businessOutcome:'TOOL_OPERATION_VERIFIED'};
+        external={verified:true,domainVerified:true,receiptId,evidenceRef:'metropolis-station-receipt://'+receiptId,
+          stationResult:{receipt,data:observed.data,readbackVerified:true}};
       } else throw new Error('STATION_UNAVAILABLE');
       if(external.verified!==true||!external.receiptId||!external.evidenceRef)throw new Error('DESTINATION_READBACK_UNVERIFIED');
       const result={accepted:true,verified:true,workId:job.workId,checkpointId:job.checkpointId,
@@ -108,6 +123,14 @@ export function createGreenhouseConveyor({env, storage, runtime, factory, observ
         const job=await storage.get(key(handoff?.external?.jobId));
         return job?.result?{verified:true,domainVerified:true,evidenceRef:job.result.evidenceRef,result:job.external.stationResult}
           : {verified:false,reason:'GREENHOUSE_JOB_PENDING',jobId:handoff?.external?.jobId};
+      },
+    },
+    documents:{
+      handoff:enqueue,
+      async readback({handoff}){
+        const job=await storage.get(key(handoff?.external?.jobId));
+        return job?.result?{verified:true,domainVerified:true,evidenceRef:job.result.evidenceRef,result:job.external.stationResult}
+          :{verified:false,reason:'GREENHOUSE_JOB_PENDING',jobId:handoff?.external?.jobId};
       },
     },
     async observe(input){

@@ -68,3 +68,31 @@ test('verified delivery clears its earlier retry error instead of reporting cont
  assert.equal(status[0].status,'READBACK_VERIFIED');
  assert.equal(status[0].reason,null);
 });
+
+test('document jobs use scoped handoff, keep result cargo, and duplicate dispatch reuses receipt',async()=>{
+ const rows=new Map(),workId='WORK-docs',checkpointId=workId+':CP-01';let envelope,calls=0;
+ const pass=createWorkPass({workId,checkpointId,actor:'GO',handoffStations:['DRIVE_STATION']});
+ rows.set('work:'+workId,{workId,checkpointId,state:'HANDED_OFF',workPass:pass,workPassRef:'work-pass://'+pass.passId});
+ const storage={get:async k=>structuredClone(rows.get(k)),put:async(k,v)=>rows.set(k,structuredClone(v))};
+ const env={MCP_WORK_GRANTS:'[]',METROPOLIS_GREENHOUSE_RAIL_SECRET:'test-rail',GREENHOUSE_TRANSPORT:{async fetch(r){envelope=await r.json();return new Response(JSON.stringify({...envelope,status:'QUEUED'}),{status:202});}}};
+ const c=createGreenhouseConveyor({env,storage,runtime:{getWork:id=>storage.get('work:'+id)},factory:{},observatory:{},documents:{DRIVE_STATION:{execute:async()=>{calls++;return {verified:true,data:{files:[{id:'real-file'}]},observedAt:'2026-10-12T00:00:00Z'};}}}});
+ const input={workId,checkpointId,actor:'GO',stationId:'DRIVE_STATION',operation:'list',payload:{limit:1,journeyId:'j',workPassRef:'work-pass://'+pass.passId}};
+ const queued=await c.documents.handoff(input);rows.get('work:'+workId).handoff={external:queued};
+ const invoke=async()=> (await (await railRequest({fetch:r=>c.fetch(r)},'test-rail','/station/dispatch',envelope)).json());
+ assert.equal((await invoke()).verified,true);assert.equal((await invoke()).receiptRef,(await invoke()).receiptRef);assert.equal(calls,1);
+ const job=rows.get('greenhouse:job:'+queued.jobId);assert.equal(job.external.stationResult.data.files[0].id,'real-file');
+ assert.equal(job.external.stationResult.receipt.actor,'GO');assert.equal(job.external.stationResult.receipt.workId,workId);
+ const w=rows.get('work:'+workId);assert.equal((await c.documents.readback({handoff:w.handoff})).result.data.files[0].id,'real-file');
+ // READ alone must not authorize a document handoff at the final dispatch boundary.
+ const second=await c.documents.handoff({...input,payload:{...input.payload,journeyId:'j2'}});rows.get('work:'+workId).handoff={external:second};
+ env.MCP_WORK_GRANTS=JSON.stringify([{actor:'GO',workId,action:'read'}]);
+ assert.equal((await invoke()).reason,'WORK_AUTHORIZATION_REVOKED');assert.equal(calls,1);
+});
+test('document operation validation rejects caller secret cargo before queue intake',async()=>{
+ const x=fixture();await assert.rejects(()=>x.conveyor.documents.handoff({...x.input,stationId:'DRIVE_STATION',operation:'list',payload:{token:'do-not-queue'}}),/TOOL_ARGUMENT_INVALID/);
+ assert.equal(x.envelope,undefined);
+});
+test('document cargo exceeding the actual Greenhouse envelope limit is rejected before persistence',async()=>{
+ const x=fixture();await assert.rejects(()=>x.conveyor.documents.handoff({...x.input,stationId:'DRIVE_STATION',operation:'create_text',payload:{name:'Test',text:'\n'.repeat(12000),workPassRef:'p'}}),/TOOL_CARGO_TOO_LARGE/);
+ assert.equal(x.envelope,undefined);assert.equal([...x.rows.keys()].filter(k=>k.startsWith('greenhouse:job:')).length,0);
+});

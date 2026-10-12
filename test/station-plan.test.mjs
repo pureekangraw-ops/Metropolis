@@ -9,7 +9,8 @@ test('Station Plan binds Observatory to Metropolis and Factory to its ready runt
   const observatory = STATION_PLAN_V1.stations.find((station) => station.stationId === 'OBSERVATORY_STATION');
   assert.deepEqual(observatory.runtimeBinding, { kind: 'METROPOLIS_ENTRY', binding: 'METROPOLIS_ENTRY', path: '/observatory' });
   assert.deepEqual(observatory.cargoKinds, ['DATA', 'EVIDENCE']);
-  assert.equal(STATION_PLAN_V1.stations.filter((station) => !['FACTORY_STATION', 'OBSERVATORY_STATION'].includes(station.stationId)).every((station) => station.runtimeBinding === null), true);
+  for(const stationId of ['DRIVE_STATION','NOTION_STATION'])assert.deepEqual(STATION_PLAN_V1.stations.find(s=>s.stationId===stationId).runtimeBinding,{kind:'GREENHOUSE_CONVEYOR',binding:'GREENHOUSE_TRANSPORT',credentialOwner:'METROPOLIS'});
+  assert.equal(STATION_PLAN_V1.stations.find(s=>s.stationId==='PRISM_STATION').runtimeBinding,null);
 });
 
 test('Station Plan keeps Drive and Notion distinct', () => {

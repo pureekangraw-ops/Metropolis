@@ -3,18 +3,52 @@
   "name": "metropolis",
   "main": "src/mcp-worker.mjs",
   "compatibility_date": "2026-10-06",
-  "build": { "command": "node scripts/write-mcp-source-identity.mjs" },
-  "durable_objects": { "bindings": [{ "name": "METROPOLIS_ENTRY", "class_name": "MetropolisEntry" }] },
-  "services": [{"binding":"GREENHOUSE_TRANSPORT","service":"greenhouse-transport"},{"binding":"FACTORY_SERVICE","service":"factory-district"}],
-  "r2_buckets": [{ "binding": "TABLET_STORAGE", "bucket_name": "factory" }],
-  "migrations": [{ "tag": "metropolis-entry-v1", "new_sqlite_classes": ["MetropolisEntry"] }],
-  "version_metadata": { "binding": "CF_VERSION_METADATA" },
-  "observability": { "enabled": true },
+  "build": {
+    "command": "node scripts/write-mcp-source-identity.mjs"
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "METROPOLIS_ENTRY",
+        "class_name": "MetropolisEntry"
+      }
+    ]
+  },
+  "services": [
+    {
+      "binding": "GREENHOUSE_TRANSPORT",
+      "service": "greenhouse-transport"
+    },
+    {
+      "binding": "FACTORY_SERVICE",
+      "service": "factory-district"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "TABLET_STORAGE",
+      "bucket_name": "factory"
+    }
+  ],
+  "migrations": [
+    {
+      "tag": "metropolis-entry-v1",
+      "new_sqlite_classes": [
+        "MetropolisEntry"
+      ]
+    }
+  ],
+  "version_metadata": {
+    "binding": "CF_VERSION_METADATA"
+  },
+  "observability": {
+    "enabled": true
+  },
   "previews": {},
   "vars": {
     "MCP_PUBLIC_ORIGIN": "https://metropolis.pureekangraw.workers.dev",
     "FACTORY_RUNTIME_URL": "https://factory-district.pureekangraw.workers.dev",
-    "MCP_WORK_GRANTS": "[{\"actor\":\"LIGHT\",\"action\":\"read\",\"workId\":\"WORK-e459319b-9077-46ca-8191-9e45c30f618d\"},{\"actor\":\"LIGHT\",\"action\":\"handoff\",\"workId\":\"WORK-e459319b-9077-46ca-8191-9e45c30f618d\",\"stationId\":\"*\",\"operation\":\"*\"},{\"actor\":\"LIGHT\",\"action\":\"return\",\"workId\":\"WORK-e459319b-9077-46ca-8191-9e45c30f618d\"},{\"actor\":\"LIGHT\",\"action\":\"cancel\",\"workId\":\"WORK-e459319b-9077-46ca-8191-9e45c30f618d\"},{\"actor\":\"LIGHT\",\"action\":\"complete\",\"workId\":\"WORK-e459319b-9077-46ca-8191-9e45c30f618d\"}]",
+    "MCP_WORK_GRANTS": "[{\"actor\":\"LIGHT\",\"action\":\"read\",\"workId\":\"WORK-e459319b-9077-46ca-8191-9e45c30f618d\"},{\"actor\":\"LIGHT\",\"action\":\"handoff\",\"workId\":\"WORK-e459319b-9077-46ca-8191-9e45c30f618d\",\"stationId\":\"*\",\"operation\":\"*\"},{\"actor\":\"LIGHT\",\"action\":\"return\",\"workId\":\"WORK-e459319b-9077-46ca-8191-9e45c30f618d\"},{\"actor\":\"LIGHT\",\"action\":\"cancel\",\"workId\":\"WORK-e459319b-9077-46ca-8191-9e45c30f618d\"},{\"actor\":\"LIGHT\",\"action\":\"complete\",\"workId\":\"WORK-e459319b-9077-46ca-8191-9e45c30f618d\"},{\"actor\":\"GO\",\"action\":\"read\",\"workId\":\"WORK-dd02ccfc-9724-432f-88f6-65fa7dd1854c\"},{\"actor\":\"GO\",\"action\":\"return\",\"workId\":\"WORK-dd02ccfc-9724-432f-88f6-65fa7dd1854c\"},{\"actor\":\"GO\",\"action\":\"cancel\",\"workId\":\"WORK-dd02ccfc-9724-432f-88f6-65fa7dd1854c\"},{\"actor\":\"GO\",\"action\":\"complete\",\"workId\":\"WORK-dd02ccfc-9724-432f-88f6-65fa7dd1854c\"},{\"actor\":\"GO\",\"action\":\"handoff\",\"workId\":\"WORK-dd02ccfc-9724-432f-88f6-65fa7dd1854c\",\"stationId\":\"FACTORY_STATION\",\"operation\":\"*\"},{\"actor\":\"GO\",\"action\":\"handoff\",\"workId\":\"WORK-dd02ccfc-9724-432f-88f6-65fa7dd1854c\",\"stationId\":\"DRIVE_STATION\",\"operation\":\"list\"},{\"actor\":\"GO\",\"action\":\"handoff\",\"workId\":\"WORK-dd02ccfc-9724-432f-88f6-65fa7dd1854c\",\"stationId\":\"DRIVE_STATION\",\"operation\":\"search\"},{\"actor\":\"GO\",\"action\":\"handoff\",\"workId\":\"WORK-dd02ccfc-9724-432f-88f6-65fa7dd1854c\",\"stationId\":\"DRIVE_STATION\",\"operation\":\"read\"},{\"actor\":\"GO\",\"action\":\"handoff\",\"workId\":\"WORK-dd02ccfc-9724-432f-88f6-65fa7dd1854c\",\"stationId\":\"DRIVE_STATION\",\"operation\":\"read_content\"},{\"actor\":\"GO\",\"action\":\"handoff\",\"workId\":\"WORK-dd02ccfc-9724-432f-88f6-65fa7dd1854c\",\"stationId\":\"DRIVE_STATION\",\"operation\":\"create_text\"},{\"actor\":\"GO\",\"action\":\"handoff\",\"workId\":\"WORK-dd02ccfc-9724-432f-88f6-65fa7dd1854c\",\"stationId\":\"DRIVE_STATION\",\"operation\":\"update_text\"},{\"actor\":\"GO\",\"action\":\"read\",\"workId\":\"WORK-e459319b-9077-46ca-8191-9e45c30f618d\"},{\"actor\":\"GO\",\"action\":\"return\",\"workId\":\"WORK-e459319b-9077-46ca-8191-9e45c30f618d\"},{\"actor\":\"GO\",\"action\":\"cancel\",\"workId\":\"WORK-e459319b-9077-46ca-8191-9e45c30f618d\"},{\"actor\":\"GO\",\"action\":\"complete\",\"workId\":\"WORK-e459319b-9077-46ca-8191-9e45c30f618d\"},{\"actor\":\"GO\",\"action\":\"handoff\",\"workId\":\"WORK-e459319b-9077-46ca-8191-9e45c30f618d\",\"stationId\":\"FACTORY_STATION\",\"operation\":\"*\"},{\"actor\":\"GO\",\"action\":\"handoff\",\"workId\":\"WORK-e459319b-9077-46ca-8191-9e45c30f618d\",\"stationId\":\"NOTION_STATION\",\"operation\":\"search\"},{\"actor\":\"GO\",\"action\":\"handoff\",\"workId\":\"WORK-e459319b-9077-46ca-8191-9e45c30f618d\",\"stationId\":\"NOTION_STATION\",\"operation\":\"read\"},{\"actor\":\"GO\",\"action\":\"handoff\",\"workId\":\"WORK-e459319b-9077-46ca-8191-9e45c30f618d\",\"stationId\":\"NOTION_STATION\",\"operation\":\"read_blocks\"},{\"actor\":\"GO\",\"action\":\"handoff\",\"workId\":\"WORK-e459319b-9077-46ca-8191-9e45c30f618d\",\"stationId\":\"NOTION_STATION\",\"operation\":\"create_page\"},{\"actor\":\"GO\",\"action\":\"handoff\",\"workId\":\"WORK-e459319b-9077-46ca-8191-9e45c30f618d\",\"stationId\":\"NOTION_STATION\",\"operation\":\"append_text\"}]",
     "MCP_ALLOWED_ORIGINS": "[]"
   }
 }

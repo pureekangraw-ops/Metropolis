@@ -152,7 +152,7 @@ const tools = [
   {
     name: 'metropolis_work',
     title: 'Use Existing Metropolis Work',
-    description: 'Operate on existing Work. Station RETURN records OUT and asks GO to review returned items; MIMIR organizes the reviewed packet. CANCEL/COMPLETE are MIMIR lifecycle actions.',
+    description: 'Operate on existing Work. Handoff queues station operations through Greenhouse. DRIVE_STATION: list/search/read/read_content/create_text/update_text; NOTION_STATION: search/read/read_blocks/create_page/append_text. Use the existing scoped Work; credentials remain in Metro. Read Work for job status and provider result. Station RETURN records OUT; CANCEL/COMPLETE belongs to MIMIR.',
     inputSchema: workInputSchema,
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     securitySchemes: oauthSecurity,
@@ -525,7 +525,7 @@ export function createMetropolisMcp({
         ...(action==='handoff'&&readback.handoff?.external?.accepted===true ?
           {job:{jobId:readback.handoff.external.jobId,status:readback.handoff.external.status,workId,checkpointId:readback.checkpointId}} : {}) });
     } catch (error) {
-      const known = /^(.*_REQUIRED|WORK_NOT_FOUND|WORK_ALREADY_EXISTS|WORK_NOT_ONLINE|WORK_CANCELLED|NO_GRANT|READBACK_MISMATCH|INVALID_ARGUMENT|INVALID_PAYLOAD|OWNER_NOT_GRANTED|DESTINATION_NOT_GRANTED|ACTION_NOT_FOUND|WRITE_READBACK_MISMATCH|FACTORY_[A-Z0-9_]+|GREENHOUSE_[A-Z0-9_]+)$/;
+      const known = /^(.*_REQUIRED|WORK_NOT_FOUND|WORK_ALREADY_EXISTS|WORK_NOT_ONLINE|WORK_CANCELLED|NO_GRANT|READBACK_MISMATCH|INVALID_ARGUMENT|INVALID_PAYLOAD|OWNER_NOT_GRANTED|DESTINATION_NOT_GRANTED|ACTION_NOT_FOUND|WRITE_READBACK_MISMATCH|FACTORY_[A-Z0-9_]+|GREENHOUSE_[A-Z0-9_]+|TOOL_[A-Z0-9_]+)$/;
       return toolResult({ reason: known.test(error.message) ? error.message : 'WORK_OPERATION_FAILED' }, true);
     }
   }
