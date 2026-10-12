@@ -6,9 +6,9 @@ import {createWorkPass} from '../src/work-pass.mjs';
 const origin = 'https://city.example';
 test('authenticated Drive handoff reaches Greenhouse from gateway using exact Work scope',async()=>{
  const durable=storage(),workId='WORK-drive-gateway',checkpointId=workId+':CP-01';let wire;
- const pass=createWorkPass({workId,checkpointId,actor:'GO',handoffStations:['DRIVE_STATION']});
+ const pass=createWorkPass({workId,checkpointId,actor:'GO'});
  await durable.put('work:'+workId,{workId,checkpointId,ownerSystem:'GO',state:'RECEIVED',online:{status:'ONLINE'},workPass:pass,workPassRef:'work-pass://'+pass.passId,history:[]});
- const gateway=createGateway({env:{...env,MCP_WORK_GRANTS:'[]',GOOGLE_CLIENT_SECRET:'never-queue-this',METROPOLIS_GREENHOUSE_RAIL_SECRET:'test-rail',GREENHOUSE_TRANSPORT:{async fetch(r){wire=await r.json();return new Response(JSON.stringify({...wire,status:'QUEUED'}),{status:202});}}},storage:durable,sourceSha:'a'.repeat(40)});
+ const gateway=createGateway({env:{...env,MCP_WORK_GRANTS:'[]',MCP_DOCUMENT_WORK_GRANTS:JSON.stringify([{actor:'GO',workId,action:'read'},{actor:'GO',workId,action:'handoff',stationId:'DRIVE_STATION',operation:'list'}]),GOOGLE_CLIENT_SECRET:'never-queue-this',METROPOLIS_GREENHOUSE_RAIL_SECRET:'test-rail',GREENHOUSE_TRANSPORT:{async fetch(r){wire=await r.json();return new Response(JSON.stringify({...wire,status:'QUEUED'}),{status:202});}}},storage:durable,sourceSha:'a'.repeat(40)});
  const queued=await call(gateway,'metropolis_work',{workId,action:'handoff',payload:{stationId:'DRIVE_STATION',operation:'list',payload:{limit:1}}});
  assert.equal(queued.body.result.isError,false);assert.equal(wire.stationId,'DRIVE_STATION');assert.equal(wire.actor,'GO');
  assert.equal(queued.body.result.structuredContent.job.status,'QUEUED');

@@ -7,7 +7,7 @@ import { createTabletRuntime } from './tablet-runtime.mjs';
 import { createObservatoryStation } from './observatory-station.mjs';
 import { railRequest, verifyRail, createGreenhouseConveyor } from './greenhouse-conveyor.mjs';
 import {createDocumentStations} from './document-stations.mjs';
-import { inspectWorkPass } from './work-pass.mjs';
+import { inspectWorkPass, configuredWorkGrants } from './work-pass.mjs';
 
 export async function bufferRequest(request, { timeoutMs = 10000, maxBytes = 65536 } = {}) {
   if (!request.body) return request;
@@ -86,7 +86,7 @@ export function createGateway({ env, storage, sourceSha = SOURCE_SHA } = {}) {
     const cfg = configFor(env, storage);
     // Beyond GO/LIGHT, actors must be registered server-side first.
     const allowedActors = new Set(['GO', 'LIGHT', ...cfg.clients.map(c => c.subject)]);
-    grants = JSON.parse(env.MCP_WORK_GRANTS || '[]');
+    grants = configuredWorkGrants(env);
     if (!Array.isArray(grants) || grants.some(g => !allowedActors.has(g.actor) || !['read', 'handoff', 'return', 'cancel', 'complete'].includes(g.action) || !g.workId || g.workId === '*')) throw new Error('EXPLICIT_WORK_GRANTS_REQUIRED');
     const factoryStation = createFactoryStationRuntime({
       baseUrl: env.FACTORY_RUNTIME_URL,

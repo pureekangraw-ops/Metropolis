@@ -1,5 +1,5 @@
 // Greenhouse schedules delivery; City Hall retains authorization and owner receipts.
-import { inspectWorkPass, workPassAllowsHandoff } from './work-pass.mjs';
+import { inspectWorkPass, workPassAllowsHandoff, configuredWorkGrants } from './work-pass.mjs';
 import {DOCUMENT_OPERATIONS,validateDocumentOperation} from './document-stations.mjs';
 const encoder = new TextEncoder();
 const hex = bytes => [...bytes].map(x => x.toString(16).padStart(2, '0')).join('');
@@ -53,7 +53,7 @@ export function createGreenhouseConveyor({env, storage, runtime, factory, observ
     const work=await runtime.getWork(job.workId);
     if(!work||work.checkpointId!==job.checkpointId||['CANCELLED','COMPLETED'].includes(work.state))
       return {notSent:true,reason:'WORK_NOT_ACTIVE'};
-    const grants=JSON.parse(env.MCP_WORK_GRANTS||'[]').filter(g=>g.actor===job.actor&&g.workId===job.workId);
+    const grants=configuredWorkGrants(env).filter(g=>g.actor===job.actor&&g.workId===job.workId);
     const documentJob=Boolean(DOCUMENT_OPERATIONS[job.stationId]);
     const allowed=(job.stationId==='FACTORY_STATION'||documentJob)
       ? (grants.length ? grants.some(g=>g.action==='handoff'&&[job.stationId,'*'].includes(g.stationId)&&[job.operation,'*'].includes(g.operation))
