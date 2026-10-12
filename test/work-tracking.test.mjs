@@ -16,3 +16,11 @@ test('terminal work is closed; missing identity rejected', () => {
  assert.equal(projectWorkTracking({...base,state:'COMPLETED'}).execution,'CLOSED');
  assert.throws(()=>projectWorkTracking({}),/WORK_TRACKING_IDENTITY_REQUIRED/);
 });
+
+test('only a verified worker signal can show RUNNING', () => {
+ const handoff={external:{verified:true,boundaryVerified:true}};
+ const unverified=projectWorkTracking({...base,handoff,reports:[{result:{execution:'RUNNING',verified:false}}]});
+ const verified=projectWorkTracking({...base,handoff,reports:[{result:{execution:'RUNNING',verified:true}}]});
+ assert.equal(unverified.execution,'UNKNOWN');
+ assert.equal(verified.execution,'RUNNING');
+});
