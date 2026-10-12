@@ -55,6 +55,9 @@ test('GO asks HERMES to read one authorized Work without mutating its truth', as
   assert.equal(result.readbackVerified, true);
   assert.equal(result.workTruthChanged, false);
   assert.equal(result.record.workId, 'W-GO-READ');
+  assert.equal(result.tracking.workId, 'W-GO-READ');
+  assert.equal(result.tracking.execution, 'NOT_DISPATCHED');
+  assert.equal(result.tracking.freshness, 'SNAPSHOT');
   assert.deepEqual(await runtime.getWork('W-GO-READ'), before);
 });
 
