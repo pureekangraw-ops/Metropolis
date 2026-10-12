@@ -1,3 +1,5 @@
+import { normalizeCompletionCriteria } from '../../work-completion.mjs';
+
 export const HERMES_INTAKE_FLOW = Object.freeze({
   stages: Object.freeze(['INPUT_INFORMATION', 'DRAFT', 'REVIEW']),
   decisions: Object.freeze(['READY_TO_CREATE', 'READY_TO_RESUME']),
@@ -133,6 +135,15 @@ export function createHermesIntakeDesk({
 
     const informationPresent = Object.keys(record.information || {}).length > 0 || (record.inputRefs || []).length > 0;
     const issues = informationPresent ? [] : ['INFORMATION_REQUIRED'];
+    if (record.ownerSystem) {
+      try {
+        normalizeCompletionCriteria(record.information?.completionCriteria, { allowMissing: false });
+      } catch (error) {
+        issues.push(error.message === 'COMPLETION_CRITERIA_REQUIRED'
+          ? 'COMPLETION_CRITERIA_REQUIRED'
+          : 'COMPLETION_CRITERIA_INVALID');
+      }
+    }
     const next = {
       ...record,
       state: INTAKE_STATE.REVIEW,
@@ -156,6 +167,9 @@ export function createHermesIntakeDesk({
     assertActor(record, actor);
     if (record.state !== INTAKE_STATE.REVIEW || record.review?.status !== 'READY_FOR_DECISION') throw new Error('REVIEW_REQUIRED');
     if (selected === INTAKE_STATE.READY_TO_CREATE && !text(record.ownerSystem)) throw new Error('OWNER_SYSTEM_REQUIRED');
+    if (selected === INTAKE_STATE.READY_TO_CREATE) {
+      normalizeCompletionCriteria(record.information?.completionCriteria, { allowMissing: false });
+    }
 
     return persistDraft({
       ...record,

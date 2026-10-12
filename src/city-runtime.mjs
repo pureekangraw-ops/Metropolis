@@ -14,6 +14,11 @@ import { createHermesIntakeDesk } from './agents/hermes/intake-desk.mjs';
 import { cancelWorkPass, completeWorkPass, createWorkPass, workPassRef } from './work-pass.mjs';
 import { createWorkStateSignalLine, WORK_SIGNAL_STATUS } from './work-state-signal.mjs';
 import { createToolSignalLine } from './tool-signal-line.mjs';
+import {
+  completionReviewTriggers,
+  evaluateCompletionCriteria,
+  normalizeCompletionCriteria,
+} from './work-completion.mjs';
 
 export const CITY_COMPONENTS = Object.freeze(['METROPOLIS', 'CITY_HALL', 'WORK_SYSTEM', 'POST_OFFICE', 'PIXIE_SERVICE', 'SHOP', 'SPECTRUMSALE', 'THE_TAILOR']);
 export const WORK_STATE = Object.freeze({RECEIVED:'RECEIVED',HANDED_OFF:'HANDED_OFF',RETURN_REVIEW:'RETURN_REVIEW',RETURNED:'RETURNED',COMPLETED:'COMPLETED',CANCELLED:'CANCELLED',UNKNOWN:'UNKNOWN'});
@@ -66,6 +71,7 @@ export function createCityRuntime({ store = createMemoryStore(), clock = () => n
     if (existing) throw new Error('WORK_ALREADY_EXISTS');
     const now = clock();
     const cp = checkpointId == null ? `${id}:CP-01` : text(checkpointId, 'checkpointId');
+    const completionCriteria = normalizeCompletionCriteria(intakeInformation?.completionCriteria);
     const pass = workPassActor == null ? null : createWorkPass({
       workId: id,
       checkpointId: cp,
@@ -91,6 +97,9 @@ export function createCityRuntime({ store = createMemoryStore(), clock = () => n
       state: WORK_STATE.RECEIVED,
       checkpointId: cp,
       inputRefs: [...inputRefs],
+      completionContractVersion: 'HALL_COMPLETION_V1',
+      completionCriteria,
+      checkpointRefs: { safeCandidateRef: null, errorCaptureRef: null },
       intakeDraftId: intakeDraftId == null ? null : text(intakeDraftId, 'intakeDraftId'),
       intake: intakeDraftId == null ? null : {
         draftId: text(intakeDraftId, 'intakeDraftId'),
@@ -180,21 +189,25 @@ export function createCityRuntime({ store = createMemoryStore(), clock = () => n
     await store.put(`work:${id}`,next); return clone(next);
   }
 
-  async function returnWork({workId,checkpointId,readback=null,evidenceRefs=[],updates=[],stationReviewed=false,actor='GO'}={}) {
+  async function returnWork({workId,checkpointId,readback=null,evidenceRefs=[],updates=[],independentReviewComplete=false,actor='GO'}={}) {
     const id=text(workId,'workId'); let record=await store.get(`work:${id}`);
     if(!record) throw new Error('WORK_NOT_FOUND');
     if(record.checkpointId!==text(checkpointId,'checkpointId')) throw new Error('CHECKPOINT_MISMATCH');
     if(record.handoff?.external?.jobId && record.handoff.external.status!=='READBACK_VERIFIED')
       throw new Error('GREENHOUSE_JOB_PENDING');
     let review=record.stationReturnReview;
-    if(!review||review.status!=='GO_REVIEW_REQUIRED'||(stationReviewed!==true&&review.verified!==true)){
+    if(!review||(!review.verified&&!independentReviewComplete)){
       const stationRuntime=stations[record.handoff?.stationId]; let trustedReadback=clone(readback); let trustedVerified=false;
       const trustedEvidence=[...new Set((Array.isArray(evidenceRefs)?evidenceRefs:[]).filter(Boolean))];
+      const ownerEvidence=[];
       if(stationRuntime?.readback&&record.handoff?.external){
         trustedReadback=await stationRuntime.readback({workId:id,checkpointId:record.checkpointId,handoff:clone(record.handoff)});
-        trustedVerified=trustedReadback?.verified===true&&trustedReadback?.domainVerified===true;
-        if(trustedReadback?.evidenceRef&&!trustedEvidence.includes(trustedReadback.evidenceRef)) trustedEvidence.push(trustedReadback.evidenceRef);
+        if(typeof trustedReadback?.evidenceRef==='string'&&trustedReadback.evidenceRef.trim()) ownerEvidence.push(trustedReadback.evidenceRef.trim());
+        if(Array.isArray(trustedReadback?.evidenceRefs)) ownerEvidence.push(...trustedReadback.evidenceRefs.filter(ref=>typeof ref==='string'&&ref.trim()).map(ref=>ref.trim()));
+        trustedVerified=trustedReadback?.verified===true&&trustedReadback?.domainVerified===true&&ownerEvidence.length>0;
+        for(const ref of ownerEvidence) if(!trustedEvidence.includes(ref)) trustedEvidence.push(ref);
       }
+      const reviewTriggers=completionReviewTriggers(record.completionCriteria,trustedReadback,trustedVerified);
       const now=clock();
       const journeyList=[...(record.journeys||[])];
       const openIndex=journeyList.map(j=>j?.status).lastIndexOf('IN_TRANSIT');
@@ -210,11 +223,38 @@ export function createCityRuntime({ store = createMemoryStore(), clock = () => n
       const dataLifecycle=rotatePixieData(record.dataLifecycle||[],{dataId:`${id}:DATA:PIXIE:${reports.length}`,workId:id,checkpointId:record.checkpointId,producer:'PIXIE',kind:'TOOL_REPORT',payloadRef:`pixie-report://${reportId}`,evidenceRefs:report.evidenceRefs,ownerSystem:record.ownerSystem,truthOwner:record.ownerSystem,createdAt:now});
       const journeys=[...(record.journeys||[])];
       if(openJourney) journeys[journeyIndex]=closeStationJourney(openJourney,{baggage:baggageOut,diagnostic,outAt:openJourney.outAt||now});
-      review={kind:'STATION_RETURN_REVIEW',status:'GO_REVIEW_REQUIRED',stationId:record.handoff?.stationId||null,journeyId:openJourney?.journeyId||record.handoff?.journeyId||null,match:true,outAt:now,counts:clone(diagnostic.counts),diagnostic:clone(diagnostic),readback:clone(trustedReadback),evidenceRefs:[...trustedEvidence],verified:trustedVerified,prompt:'CHECK_RETURNED_ITEMS; ADD_UPDATES_IF_ANY; OTHERWISE_PASS'};
-      record={...record,state:WORK_STATE.RETURN_REVIEW,stationReturnReview:review,journeys,reports,dataLifecycle,history:[...(record.history||[]),{state:WORK_STATE.RETURN_REVIEW,journeyId:review.journeyId,at:now}],updatedAt:now};
-      await store.put(`work:${id}`,record);
+      review={
+        kind:'STATION_RETURN_REVIEW',
+        status:reviewTriggers.length?'INDEPENDENT_REVIEW_REQUIRED':'AUTO_VERIFIED',
+        reviewTriggers:[...reviewTriggers],
+        stationId:record.handoff?.stationId||null,
+        journeyId:openJourney?.journeyId||record.handoff?.journeyId||null,
+        match:true,
+        outAt:now,
+        returnedBy:text(actor,'actor'),
+        counts:clone(diagnostic.counts),
+        diagnostic:clone(diagnostic),
+        readback:clone(trustedReadback),
+        evidenceRefs:[...trustedEvidence],
+        verified:trustedVerified,
+      };
+      record={
+        ...record,
+        state:reviewTriggers.length?WORK_STATE.RETURN_REVIEW:record.state,
+        stationReturnReview:review,
+        journeys,
+        reports,
+        dataLifecycle,
+        history:reviewTriggers.length
+          ? [...(record.history||[]),{state:WORK_STATE.RETURN_REVIEW,journeyId:review.journeyId,at:now}]
+          : [...(record.history||[])],
+        updatedAt:now,
+      };
+      if(reviewTriggers.length) await store.put(`work:${id}`,record);
     }
-    if(stationReviewed!==true) return clone(record);
+    const needsIndependentReview=Array.isArray(review.reviewTriggers)&&review.reviewTriggers.length>0;
+    if(needsIndependentReview&&!independentReviewComplete) return clone(record);
+    if(needsIndependentReview&&text(actor,'actor')===review.returnedBy) throw new Error('INDEPENDENT_REVIEWER_REQUIRED');
     const now=clock();
     const organized=prepareMimirReturn({workId:id,checkpointId:record.checkpointId,journeyId:review.journeyId,readback:review.readback,evidenceRefs:review.evidenceRefs||[],updates,observedAt:now});
     let dataLifecycle=rotatePixieData(record.dataLifecycle||[],{dataId:`${id}:DATA:MIMIR:${(record.reports||[]).length}`,workId:id,checkpointId:record.checkpointId,producer:'MIMIR',kind:'RETURN_PACKET',payloadRef:`mimir-return://${id}/${record.checkpointId}`,evidenceRefs:review.evidenceRefs||[],ownerSystem:record.ownerSystem,truthOwner:record.ownerSystem,createdAt:now});
@@ -228,7 +268,11 @@ export function createCityRuntime({ store = createMemoryStore(), clock = () => n
       if(postal.status==='DELIVERED'&&postal.receipt?.receiptId) dataLifecycle=rotatePixieData(dataLifecycle,{dataId:`${id}:DATA:POST_OFFICE:${(record.reports||[]).length}`,workId:id,checkpointId:record.checkpointId,producer:'POST_OFFICE',kind:'DELIVERY_RECEIPT',payloadRef:`post-office://${postal.receipt.receiptId}`,evidenceRefs:[],ownerSystem:record.ownerSystem,truthOwner:record.ownerSystem,createdAt:now});
     }
     const state=review.verified?WORK_STATE.RETURNED:WORK_STATE.UNKNOWN;
-    const next={...record,state,returnReview:clone(organized),stationReturnReview:{...clone(review),status:'GO_REVIEWED',reviewedBy:text(actor,'actor'),reviewedAt:now},dataLifecycle,
+    const checkpointRefs={
+      safeCandidateRef:typeof review.readback?.checkpointRefs?.safeCandidateRef==='string'?review.readback.checkpointRefs.safeCandidateRef.trim()||null:null,
+      errorCaptureRef:typeof review.readback?.checkpointRefs?.errorCaptureRef==='string'?review.readback.checkpointRefs.errorCaptureRef.trim()||null:null,
+    };
+    const next={...record,state,checkpointRefs,returnReview:clone(organized),stationReturnReview:{...clone(review),status:needsIndependentReview?'INDEPENDENTLY_REVIEWED':'AUTO_VERIFIED',...(needsIndependentReview?{reviewedBy:text(actor,'actor'),reviewedAt:now}:{})},dataLifecycle,
       return:{actor:text(actor,'actor'),readback:clone(review.readback),evidenceRefs:[...(review.evidenceRefs||[])],organized:clone(organized.organized),postal:clone(postal),verified:review.verified===true,returnedAt:now},
       history:[...(record.history||[]),{state,journeyId:review.journeyId,at:now}],updatedAt:now};
     await store.put(`work:${id}`,next); return clone(next);
@@ -265,10 +309,19 @@ export function createCityRuntime({ store = createMemoryStore(), clock = () => n
     });
     return clone(next);
   }
-  async function completeWork({workId,actor='MIMIR',requestedBy=null}={}) {
+  async function completeWork({workId,actor='MIMIR',requestedBy=null,criteriaResults=[]}={}) {
     const id=text(workId,'workId'); const record=await store.get(`work:${id}`); if(!record) throw new Error('WORK_NOT_FOUND'); if(record.state===WORK_STATE.COMPLETED) return clone(record); if(record.state===WORK_STATE.CANCELLED) throw new Error('WORK_CANCELLED');
-    const now=clock(); const next={...record,state:WORK_STATE.COMPLETED,online:{...(record.online||{}),status:'OFFLINE',closure:'COMPLETE',closedAt:now,closedBy:'MIMIR'},
-      workPass:completeWorkPass(record.workPass,{completedAt:now,completedBy:'MIMIR'}),completion:{actor:'MIMIR',requestedBy:requestedBy||actor,completedAt:now},history:[...(record.history||[]),{state:WORK_STATE.COMPLETED,actor:'MIMIR',at:now}],updatedAt:now};
+    if(!record.completionCriteria) throw new Error('COMPLETION_CRITERIA_REQUIRED');
+    if(record.handoff&&(!record.return||record.state!==WORK_STATE.RETURNED||record.return.verified!==true)) throw new Error('WORK_NOT_RETURNED');
+    const now=clock();
+    const completionCheck=evaluateCompletionCriteria(record.completionCriteria,criteriaResults,{assessedAt:now,assessedBy:'MIMIR'});
+    if(completionCheck.status!=='PASS'){
+      const next={...record,completionCheck,history:[...(record.history||[]),{event:'COMPLETION_CHECK',status:completionCheck.status,actor:'MIMIR',at:now}],updatedAt:now};
+      await store.put(`work:${id}`,next);
+      return clone(next);
+    }
+    const next={...record,state:WORK_STATE.COMPLETED,online:{...(record.online||{}),status:'OFFLINE',closure:'COMPLETE',closedAt:now,closedBy:'MIMIR'},
+      workPass:completeWorkPass(record.workPass,{completedAt:now,completedBy:'MIMIR'}),completionCheck,completion:{actor:'MIMIR',requestedBy:requestedBy||actor,completedAt:now},history:[...(record.history||[]),{event:'COMPLETION_CHECK',status:'PASS',actor:'MIMIR',at:now},{state:WORK_STATE.COMPLETED,actor:'MIMIR',at:now}],updatedAt:now};
     await store.put(`work:${id}`,next);
     await workStateSignals.publish({
       workId:id, checkpointId:record.checkpointId, status:WORK_SIGNAL_STATUS.OFFLINE, publisher:'MIMIR',

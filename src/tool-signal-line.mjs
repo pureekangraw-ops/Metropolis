@@ -3,6 +3,42 @@
 const PREFIX = 'hall:tool-signal:';
 const validId = value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(value);
 const copy = value => value == null ? value : structuredClone(value);
+export const TOOL_EVENT_TYPES = Object.freeze(['TOOL_DONE', 'ERROR', 'APPROVAL_REQUIRED']);
+const nonEmptyString = value => typeof value === 'string' && value.trim().length > 0;
+
+function validateEvent({ body, workId, checkpointId }) {
+  if (body.schema !== 'TOOL_EVENT_V1') throw new Error('TOOL_EVENT_SCHEMA_INVALID');
+  if (!TOOL_EVENT_TYPES.includes(body.eventType)) throw new Error('TOOL_EVENT_TYPE_INVALID');
+  if (!workId || !checkpointId) throw new Error('TOOL_EVENT_WORK_CONTEXT_REQUIRED');
+  if (body.eventType === 'TOOL_DONE') {
+    if (!Array.isArray(body.evidenceRefs) || body.evidenceRefs.length === 0
+      || body.evidenceRefs.some(ref => !nonEmptyString(ref))) {
+      throw new Error('TOOL_DONE_EVIDENCE_REQUIRED');
+    }
+  }
+  if (['ERROR', 'APPROVAL_REQUIRED'].includes(body.eventType) && !nonEmptyString(body.reason)) {
+    throw new Error('TOOL_EVENT_REASON_REQUIRED');
+  }
+  if (body.checkpointRefs != null) {
+    const refs = body.checkpointRefs;
+    if (!refs || typeof refs !== 'object' || Array.isArray(refs)) {
+      throw new Error('TOOL_EVENT_CHECKPOINT_REFS_INVALID');
+    }
+    if (Object.keys(refs).some(key => !['safeCandidateRef', 'errorCaptureRef'].includes(key))) {
+      throw new Error('TOOL_EVENT_CHECKPOINT_REFS_INVALID');
+    }
+    if (Object.values(refs).some(ref => ref != null && !nonEmptyString(ref))) {
+      throw new Error('TOOL_EVENT_CHECKPOINT_REFS_INVALID');
+    }
+    if (refs.safeCandidateRef && body.eventType !== 'TOOL_DONE') {
+      throw new Error('SAFE_CANDIDATE_REF_EVENT_INVALID');
+    }
+    if (refs.errorCaptureRef && body.eventType !== 'ERROR') {
+      throw new Error('ERROR_CAPTURE_REF_EVENT_INVALID');
+    }
+  }
+}
+
 export function createToolSignalLine({store, clock=()=>new Date().toISOString(), maxAgeMs=60000}={}) {
   if (!store || typeof store.get !== 'function' || typeof store.put !== 'function') throw new Error('TOOL_SIGNAL_STORE_REQUIRED');
   async function presence(toolId, now=Date.now()) {
@@ -27,6 +63,7 @@ export function createToolSignalLine({store, clock=()=>new Date().toISOString(),
     if (workId!==null&&!validId(workId)) throw new Error('WORK_ID_INVALID');
     if (checkpointId!==null&&!validId(checkpointId)) throw new Error('CHECKPOINT_ID_INVALID');
     if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('TOOL_SIGNAL_BODY_INVALID');
+    if (kind === 'EVENT') validateEvent({ body, workId, checkpointId });
     const encoded=JSON.stringify(body);
     if (!encoded||encoded.length>4096) throw new Error('TOOL_SIGNAL_BODY_TOO_LARGE');
     const key=PREFIX+'message:'+from+':'+messageId;

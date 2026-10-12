@@ -9,16 +9,17 @@ function factoryBranchRuntime(){return{
 };}
 test('Station Branch golden path: ONLINE -> IN -> work -> OUT -> PIXIE -> GO -> MIMIR -> COMPLETE',async()=>{
  let tick=0; const runtime=createCityRuntime({store:createMemoryStore(),clock:()=>`2026-10-07T11:${String(tick++).padStart(2,'0')}:00.000Z`,idFactory:(()=>{let n=0;return()=>`ID-${++n}`;})(),stationRuntimes:{FACTORY_STATION:factoryBranchRuntime()}});
- const created=await runtime.intake({workId:'WORK-GOLDEN',ownerSystem:'FACTORY',requestedBy:'GO',workPassActor:'GO'});
+ const created=await runtime.intake({workId:'WORK-GOLDEN',ownerSystem:'FACTORY',requestedBy:'GO',workPassActor:'GO',
+  intakeInformation:{completionCriteria:{items:[{criterionId:'artifact',description:'Factory result artifact is returned and verified'}]}}});
  assert.equal(created.online.status,'ONLINE'); assert.equal(created.online.activation,'NEW');
  const sent=await runtime.handoff({workId:created.workId,checkpointId:created.checkpointId,stationId:'FACTORY_STATION',operation:'BUILD',actor:'GO',payload:{inputRefs:['artifact://source-1']}});
  assert.equal(sent.journeys[0].status,'IN_TRANSIT'); assert.equal(sent.journeys[0].baggageIn.payloadRefs[0],'artifact://source-1'); assert.equal(sent.journeys[0].branchProfile.returnInspection,'DWARF_VERIFY');
- const review=await runtime.returnWork({workId:created.workId,checkpointId:created.checkpointId,actor:'GO'});
- assert.equal(review.state,WORK_STATE.RETURN_REVIEW); assert.equal(review.stationReturnReview.status,'GO_REVIEW_REQUIRED');
- assert.equal(review.stationReturnReview.counts.artifactRefs,1); assert.equal(review.stationReturnReview.counts.evidenceRefs,1); assert.equal(review.journeys[0].status,'RETURNED'); assert.ok(review.journeys[0].outAt);
- const stored=await runtime.returnWork({workId:created.workId,checkpointId:created.checkpointId,actor:'GO',stationReviewed:true,updates:[{kind:'ARTIFACT',valueRef:'artifact://factory/result-1'}]});
+ const stored=await runtime.returnWork({workId:created.workId,checkpointId:created.checkpointId,actor:'GO',updates:[{kind:'ARTIFACT',valueRef:'artifact://factory/result-1'}]});
+ assert.equal(stored.state,WORK_STATE.RETURNED); assert.equal(stored.stationReturnReview.status,'AUTO_VERIFIED');
+ assert.equal(stored.stationReturnReview.counts.artifactRefs,1); assert.equal(stored.stationReturnReview.counts.evidenceRefs,1); assert.equal(stored.journeys[0].status,'RETURNED'); assert.ok(stored.journeys[0].outAt);
  assert.equal(stored.state,WORK_STATE.RETURNED); assert.equal(stored.returnReview.status,'ORGANIZED'); assert.equal(stored.return.organized.updates[0].valueRef,'artifact://factory/result-1'); assert.equal(stored.dataLifecycle.every(entry=>entry.managedBy==='PIXIE'),true);
- const completed=await runtime.completeWork({workId:created.workId,requestedBy:'GO'});
+ const completed=await runtime.completeWork({workId:created.workId,requestedBy:'GO',
+  criteriaResults:[{criterionId:'artifact',status:'PASS',evidenceRefs:['factory://readback/R1','artifact://factory/result-1']}]});
  assert.equal(completed.state,WORK_STATE.COMPLETED); assert.equal(completed.online.status,'OFFLINE'); assert.equal(completed.online.closure,'COMPLETE'); assert.equal(completed.workPass.status,'COMPLETED');
 });
 test('HERMES resume re-announces the same Work online and Journey ID is searchable for recovery',async()=>{

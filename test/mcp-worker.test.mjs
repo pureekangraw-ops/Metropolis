@@ -40,7 +40,10 @@ async function call(gateway, name, args, subject = 'GO') {
 async function createObservatoryWork(gateway) {
   const input = await call(gateway, 'metropolis_reception', {
     action: 'input_information',
-    payload: { information: { title: 'Observatory read test' }, ownerSystem: 'OBSERVATORY' },
+    payload: { information: {
+      title: 'Observatory read test',
+      completionCriteria: { items: [{ criterionId: 'readback', description: 'Observation readback is verified' }] },
+    }, ownerSystem: 'OBSERVATORY' },
   });
   const draftId = input.body.result.structuredContent.result.draftId;
   for (const action of ['review', 'ready_to_create']) {
@@ -125,7 +128,10 @@ test('owner-registered ORACLE actor uses same MCP entrance, Work Pass and profil
   assert.match(identity.id, /^prf_/);
   const started = await invoke('metropolis_reception', {
     action: 'input_information', payload: {
-      information: { title: 'Registered ORACLE test' }, ownerSystem: 'FACTORY',
+      information: {
+        title: 'Registered ORACLE test',
+        completionCriteria: { items: [{ criterionId: 'oracle-result', description: 'The registered actor result is returned' }] },
+      }, ownerSystem: 'FACTORY',
     },
   });
   assert.equal(started.body.result.isError, false);
@@ -169,7 +175,10 @@ test('Work created by HERMES survives a fresh gateway on the same durable storag
 
   const input = await call(first, 'metropolis_reception', {
     action: 'input_information',
-    payload: { information: { title: 'Persistent work' }, ownerSystem: 'FACTORY' },
+    payload: { information: {
+      title: 'Persistent work',
+      completionCriteria: { items: [{ criterionId: 'persistent', description: 'The Work record remains readable' }] },
+    }, ownerSystem: 'FACTORY' },
   });
   assert.equal(input.body.result.isError, false);
   const draftId = input.body.result.structuredContent.result.draftId;

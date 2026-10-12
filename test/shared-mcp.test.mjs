@@ -164,7 +164,8 @@ test('tool descriptors expose strict action-discriminated input schemas', async 
   const workCancel = work.inputSchema.oneOf.find(schema => schema.properties.action.const === 'cancel');
   const workComplete = work.inputSchema.oneOf.find(schema => schema.properties.action.const === 'complete');
   assert.deepEqual(workCancel.required, ['action', 'workId']);
-  assert.deepEqual(workComplete.required, ['action', 'workId']);
+  assert.deepEqual(workComplete.required, ['action', 'workId', 'payload']);
+  assert.deepEqual(workComplete.properties.payload.required, ['criteriaResults']);
 });
 
 test('runtime rejects arguments that violate the action-specific tool schema', async () => {
@@ -251,7 +252,11 @@ test('HERMES creates Work ID only after INPUT → DRAFT → REVIEW → READY TO 
     arguments: {
       action: 'input_information',
       payload: {
-        information: { title: 'First real work', summary: 'Create after review' },
+        information: {
+          title: 'First real work',
+          summary: 'Create after review',
+          completionCriteria: { items: [{ criterionId: 'first-result', description: 'The requested result is returned and verified' }] },
+        },
         ownerSystem: 'FACTORY',
       },
     },
@@ -292,6 +297,32 @@ test('HERMES creates Work ID only after INPUT → DRAFT → REVIEW → READY TO 
   assert.equal(created.structuredContent.result.go, true);
 });
 
+test('HERMES refuses READY TO CREATE until acceptance criteria are explicit', async () => {
+  const runtime = createCityRuntime({ store: createMemoryStore() });
+  const server = service('criteria-required', runtime, []);
+  const input = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_reception',
+    arguments: {
+      action: 'input_information',
+      payload: { information: { title: 'No acceptance yet' }, ownerSystem: 'FACTORY' },
+    },
+  })).json()).result;
+  const draftId = input.structuredContent.result.draftId;
+  const review = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_reception',
+    arguments: { action: 'review', draftId, payload: {} },
+  })).json()).result;
+  assert.equal(review.structuredContent.result.review.status, 'NEEDS_INFORMATION');
+  assert.deepEqual(review.structuredContent.result.review.issues, ['COMPLETION_CRITERIA_REQUIRED']);
+  const ready = (await (await rpc(server, 'tools/call', {
+    name: 'metropolis_reception',
+    arguments: { action: 'ready_to_create', draftId, payload: {} },
+  })).json()).result;
+  assert.equal(ready.isError, true);
+  assert.equal(ready.structuredContent.reason, 'REVIEW_REQUIRED');
+  assert.equal((await runtime.listWorks()).length, 0);
+});
+
 test('HERMES-created GO Work gets persisted Work Pass access without manual grants', async () => {
   const runtime = createCityRuntime({ store: createMemoryStore() });
   const server = service('derived', runtime, []);
@@ -300,7 +331,10 @@ test('HERMES-created GO Work gets persisted Work Pass access without manual gran
     name: 'metropolis_reception',
     arguments: {
       action: 'input_information',
-      payload: { information: { title: 'Derived access work' }, ownerSystem: 'PRISM' },
+      payload: { information: {
+        title: 'Derived access work',
+        completionCriteria: { items: [{ criterionId: 'derived-result', description: 'The Work record is readable' }] },
+      }, ownerSystem: 'PRISM' },
     },
   })).json()).result;
   const draftId = input.structuredContent.result.draftId;
@@ -408,7 +442,10 @@ test('MIMIR CANCEL makes persisted Work Pass read-only, takes Work offline and b
   const server = service('cancel-pass', runtime, []);
   const input = (await (await rpc(server, 'tools/call', {
     name:'metropolis_reception',
-    arguments:{action:'input_information',payload:{information:{title:'Cancelable pass work'},ownerSystem:'PRISM'}},
+    arguments:{action:'input_information',payload:{information:{
+      title:'Cancelable pass work',
+      completionCriteria:{items:[{criterionId:'cancelable',description:'The cancellation path is available'}]},
+    },ownerSystem:'PRISM'}},
   })).json()).result;
   const draftId=input.structuredContent.result.draftId;
   await rpc(server,'tools/call',{name:'metropolis_reception',arguments:{action:'review',draftId,payload:{}}});
@@ -529,10 +566,13 @@ test('MCP notifications have no JSON-RPC response', async () => {
   assert.equal(accepted.status, 202);
   assert.equal(await accepted.text(), '');
 });
-test('return records Station OUT review first, then MIMIR organizes after GO review', async () => {
+test('return uses independent review only when evidence is incomplete', async () => {
   const runtime=createCityRuntime();
   await runtime.intake({workId:'W1',ownerSystem:'FACTORY'});
-  const server=service('one',runtime,[{actor:'GO',action:'return',workId:'W1'}]);
+  const server=service('one',runtime,[
+    {actor:'GO',action:'return',workId:'W1'},
+    {actor:'LIGHT',action:'return',workId:'W1'},
+  ]);
   await arrive(server);
   const spoofed=(await (await rpc(server,'tools/call',{name:'metropolis_work',arguments:{action:'return',workId:'W1',payload:{verified:true,evidenceRefs:['evidence://one']}}})).json()).result;
   assert.equal(spoofed.isError,true);
@@ -540,10 +580,10 @@ test('return records Station OUT review first, then MIMIR organizes after GO rev
   const review=(await (await rpc(server,'tools/call',{name:'metropolis_work',arguments:{action:'return',workId:'W1',payload:{evidenceRefs:['evidence://one']}}})).json()).result;
   assert.equal(review.isError,false);
   assert.equal(review.structuredContent.record.return,null);
-  assert.equal(review.structuredContent.record.stationReturnReview.status,'GO_REVIEW_REQUIRED');
-  const reply=(await (await rpc(server,'tools/call',{name:'metropolis_work',arguments:{action:'return',workId:'W1',payload:{stationReviewed:true,updates:[]}}})).json()).result;
+  assert.equal(review.structuredContent.record.stationReturnReview.status,'INDEPENDENT_REVIEW_REQUIRED');
+  const reply=(await (await rpc(server,'tools/call',{name:'metropolis_work',arguments:{action:'return',workId:'W1',payload:{independentReviewComplete:true,updates:[]}}},'light')).json()).result;
   assert.equal(reply.structuredContent.record.returnReview.status,'ORGANIZED');
-  assert.equal(reply.structuredContent.record.stationReturnReview.status,'GO_REVIEWED');
+  assert.equal(reply.structuredContent.record.stationReturnReview.status,'INDEPENDENTLY_REVIEWED');
   assert.equal(reply.structuredContent.ownerExecutionVerified,false);
 });
 test('handoff cannot widen its destination or override its Work identity', async () => {
@@ -620,7 +660,10 @@ test('LIGHT full-route grant can hand off and return the exact Work without wide
 
 test('LIGHT may request COMPLETE while MIMIR remains the lifecycle actor', async () => {
   const runtime = createCityRuntime();
-  await runtime.intake({ workId: 'W-LIGHT-CLOSE', ownerSystem: 'GO' });
+  await runtime.intake({
+    workId: 'W-LIGHT-CLOSE', ownerSystem: 'GO',
+    intakeInformation: { completionCriteria: { items: [{ criterionId: 'close-result', description: 'The completion proof is attached' }] } },
+  });
   const server = service('light-close', runtime, [
     { actor: 'LIGHT', action: 'read', workId: 'W-LIGHT-CLOSE' },
     { actor: 'LIGHT', action: 'complete', workId: 'W-LIGHT-CLOSE' },
@@ -628,7 +671,9 @@ test('LIGHT may request COMPLETE while MIMIR remains the lifecycle actor', async
 
   const reply = (await (await rpc(server, 'tools/call', {
     name: 'metropolis_work',
-    arguments: { action: 'complete', workId: 'W-LIGHT-CLOSE' },
+    arguments: { action: 'complete', workId: 'W-LIGHT-CLOSE', payload: {
+      criteriaResults: [{ criterionId: 'close-result', status: 'PASS', evidenceRefs: ['test://completion'] }],
+    } },
   }, 'light')).json()).result;
 
   assert.equal(reply.isError, false);
@@ -648,7 +693,11 @@ test('LIGHT has HERMES and persisted Work capability parity with GO while identi
     arguments: {
       action: 'input_information',
       payload: {
-        information: { title: 'LIGHT parity work', summary: 'Full operational path' },
+        information: {
+          title: 'LIGHT parity work',
+          summary: 'Full operational path',
+          completionCriteria: { items: [{ criterionId: 'light-result', description: 'The returned work passes its acceptance check' }] },
+        },
         ownerSystem: 'FACTORY',
       },
     },

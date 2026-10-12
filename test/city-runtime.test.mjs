@@ -19,7 +19,10 @@ test('Rail Link has exactly two Station endpoints and one trust boundary', () =>
 
 test('Work identity remains stable across online intake, Station IN/OUT review and MIMIR return', async () => {
   const runtime = createCityRuntime({ store: createMemoryStore(), idFactory: (() => { let n = 0; return () => `ID-${++n}`; })(), clock: (() => { let n = 0; return () => `2026-10-06T00:00:${String(n++).padStart(2, '0')}Z`; })() });
-  const received = await runtime.intake({ workId: 'WORK-1', ownerSystem: 'FACTORY', requestedBy: 'GO' });
+  const received = await runtime.intake({
+    workId: 'WORK-1', ownerSystem: 'FACTORY', requestedBy: 'GO',
+    intakeInformation: { completionCriteria: { items: [{ criterionId: 'result', description: 'Returned result is verified' }] } },
+  });
   assert.equal(received.online.status, 'ONLINE');
   assert.equal(received.online.activation, 'NEW');
   const handed = await runtime.handoff({ workId: 'WORK-1', checkpointId: received.checkpointId, stationId: 'FACTORY_STATION', operation: 'EXECUTE' });
@@ -27,11 +30,14 @@ test('Work identity remains stable across online intake, Station IN/OUT review a
   assert.ok(handed.journeys[0].inAt);
   const review = await runtime.returnWork({ workId: 'WORK-1', checkpointId: received.checkpointId, readback: { owner: 'FACTORY' }, evidenceRefs: ['evidence://1'] });
   assert.equal(review.state, WORK_STATE.RETURN_REVIEW);
-  assert.equal(review.stationReturnReview.status, 'GO_REVIEW_REQUIRED');
+  assert.equal(review.stationReturnReview.status, 'INDEPENDENT_REVIEW_REQUIRED');
   assert.equal(review.journeys[0].status, 'RETURNED');
   assert.ok(review.journeys[0].outAt);
   assert.equal(review.return, null);
-  const returned = await runtime.returnWork({ workId: 'WORK-1', checkpointId: received.checkpointId, stationReviewed: true, updates: [] });
+  const returned = await runtime.returnWork({
+    workId: 'WORK-1', checkpointId: received.checkpointId, actor: 'LIGHT',
+    independentReviewComplete: true, updates: [],
+  });
   assert.equal(returned.workId, 'WORK-1');
   assert.equal(returned.returnReview.status, 'ORGANIZED');
   assert.equal(returned.dataLifecycle.some(entry => entry.producer === 'MIMIR'), true);
@@ -121,6 +127,7 @@ test('HERMES brings Work online and MIMIR takes it offline through the Hall sign
 
   const created = await runtime.intake({
     workId:'WORK-SIGNAL-1', ownerSystem:'METROPOLIS', requestedBy:'GO', workPassActor:'GO',
+    intakeInformation: { completionCriteria: { items: [{ criterionId: 'signal', description: 'Work signal is correct' }] } },
   });
   const first = await runtime.getWorkSignal(created.workId);
   assert.equal(first.publisher, 'HERMES');
@@ -133,7 +140,10 @@ test('HERMES brings Work online and MIMIR takes it offline through the Hall sign
   assert.equal(resumed.status, 'ONLINE');
   assert.equal(resumed.sequence, 2);
 
-  await runtime.completeWork({ workId:created.workId, requestedBy:'GO' });
+  await runtime.completeWork({
+    workId:created.workId, requestedBy:'GO',
+    criteriaResults: [{ criterionId: 'signal', status: 'PASS', evidenceRefs: ['test://work-signal'] }],
+  });
   const closed = await runtime.getWorkSignal(created.workId);
   assert.equal(closed.publisher, 'MIMIR');
   assert.equal(closed.status, 'OFFLINE');

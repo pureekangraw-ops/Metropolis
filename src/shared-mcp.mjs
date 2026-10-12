@@ -6,6 +6,35 @@ const RECEPTION_ACTIONS = ['input_information', 'review', 'ready_to_create', 'cr
 const PROTOCOLS = ['2025-03-26', '2025-06-18', '2025-11-25'];
 const string = { type: 'string', minLength: 1 };
 const oauthSecurity = Object.freeze([{ type: 'oauth2', scopes: [] }]);
+const completionCriterionSchema = {
+  type: 'object',
+  properties: {
+    criterionId: string,
+    description: string,
+    independentReviewRequired: { type: 'boolean' },
+  },
+  required: ['criterionId', 'description'],
+  additionalProperties: false,
+};
+const completionCriteriaSchema = {
+  type: 'object',
+  properties: {
+    schema: { type: 'string', const: 'WORK_COMPLETION_CRITERIA_V1' },
+    items: { type: 'array', items: completionCriterionSchema },
+  },
+  required: ['items'],
+  additionalProperties: false,
+};
+const completionResultSchema = {
+  type: 'object',
+  properties: {
+    criterionId: string,
+    status: { type: 'string', enum: ['PASS', 'FAIL', 'UNKNOWN'] },
+    evidenceRefs: { type: 'array', items: string },
+  },
+  required: ['criterionId', 'status'],
+  additionalProperties: false,
+};
 const profileOutputSchema = Object.freeze({
   '$schema': 'https://json-schema.org/draft/2020-12/schema',
   type: 'object',
@@ -20,9 +49,9 @@ const profileOutputSchema = Object.freeze({
 const actionSchemas = {
   read:{type:'object',properties:{},additionalProperties:false},
   handoff:{type:'object',properties:{stationId:string,operation:string,payload:{type:'object'}},required:['stationId','operation'],additionalProperties:false},
-  return:{type:'object',properties:{readback:{type:'object'},evidenceRefs:{type:'array',items:string},updates:{type:'array',items:{type:'object',properties:{kind:string,valueRef:string,note:string},additionalProperties:false}},stationReviewed:{type:'boolean'}},additionalProperties:false},
+  return:{type:'object',properties:{readback:{type:'object'},evidenceRefs:{type:'array',items:string},updates:{type:'array',items:{type:'object',properties:{kind:string,valueRef:string,note:string},additionalProperties:false}},independentReviewComplete:{type:'boolean'}},additionalProperties:false},
   cancel:{type:'object',properties:{},additionalProperties:false},
-  complete:{type:'object',properties:{},additionalProperties:false},
+  complete:{type:'object',properties:{criteriaResults:{type:'array',items:completionResultSchema}},required:['criteriaResults'],additionalProperties:false},
 };
 
 const hermesReadInputSchema = Object.freeze({
@@ -48,7 +77,14 @@ const receptionActionSchemas = {
   input_information: {
     type: 'object',
     properties: {
-      information: { type: 'object' },
+      information: {
+        type: 'object',
+        properties: {
+          title: string,
+          summary: string,
+          completionCriteria: completionCriteriaSchema,
+        },
+      },
       inputRefs: { type: 'array', items: string },
       ownerSystem: string,
     },
@@ -101,7 +137,7 @@ const workInputSchema = Object.freeze({
   type: 'object',
   oneOf: ACTIONS.map(action => actionInputVariant(action, actionSchemas[action], {
     includeWorkId: true,
-    requirePayload: action === 'handoff',
+    requirePayload: ['handoff', 'complete'].includes(action),
   })),
 });
 
@@ -152,7 +188,7 @@ const tools = [
   {
     name: 'metropolis_work',
     title: 'Use Existing Metropolis Work',
-    description: 'Operate on existing Work. Handoff queues station operations through Greenhouse. DRIVE_STATION: list/search/read/read_content/create_text/update_text; NOTION_STATION: search/read/read_blocks/create_page/append_text. Use the existing scoped Work; credentials remain in Metro. Read Work for job status and provider result. Station RETURN records OUT; CANCEL/COMPLETE belongs to MIMIR.',
+    description: 'Operate on existing Work. Handoff queues station operations through Greenhouse. RETURN follows exception-based independent review; normal verified returns do not require GO review. COMPLETE requires PASS results and evidence references for every Work completion criterion. CANCEL/COMPLETE belongs to MIMIR.',
     inputSchema: workInputSchema,
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     securitySchemes: oauthSecurity,
@@ -507,12 +543,17 @@ export function createMetropolisMcp({
           readback: payload.readback,
           evidenceRefs: payload.evidenceRefs || [],
           updates: payload.updates || [],
-          stationReviewed: payload.stationReviewed === true,
+          independentReviewComplete: payload.independentReviewComplete === true,
         });
       } else if (action === 'cancel') {
         record = await runtime.cancelWork({ workId, actor:'MIMIR', requestedBy:actor });
       } else if (action === 'complete') {
-        record = await runtime.completeWork({ workId, actor:'MIMIR', requestedBy:actor });
+        record = await runtime.completeWork({
+          workId,
+          actor:'MIMIR',
+          requestedBy:actor,
+          criteriaResults:payload.criteriaResults||[],
+        });
       } else throw new Error('ACTION_NOT_FOUND');
       const readback = await runtime.getWork(workId);
       if (JSON.stringify(record) !== JSON.stringify(readback)) throw new Error('WRITE_READBACK_MISMATCH');
@@ -525,7 +566,7 @@ export function createMetropolisMcp({
         ...(action==='handoff'&&readback.handoff?.external?.accepted===true ?
           {job:{jobId:readback.handoff.external.jobId,status:readback.handoff.external.status,workId,checkpointId:readback.checkpointId}} : {}) });
     } catch (error) {
-      const known = /^(.*_REQUIRED|WORK_NOT_FOUND|WORK_ALREADY_EXISTS|WORK_NOT_ONLINE|WORK_CANCELLED|NO_GRANT|READBACK_MISMATCH|INVALID_ARGUMENT|INVALID_PAYLOAD|OWNER_NOT_GRANTED|DESTINATION_NOT_GRANTED|ACTION_NOT_FOUND|WRITE_READBACK_MISMATCH|FACTORY_[A-Z0-9_]+|GREENHOUSE_[A-Z0-9_]+|TOOL_[A-Z0-9_]+)$/;
+      const known = /^(.*_REQUIRED|.*_INVALID|.*_DUPLICATE|.*_NOT_MET|COMPLETION_RESULT_UNKNOWN_CRITERION|WORK_NOT_FOUND|WORK_NOT_RETURNED|WORK_ALREADY_EXISTS|WORK_NOT_ONLINE|WORK_CANCELLED|NO_GRANT|READBACK_MISMATCH|INVALID_ARGUMENT|INVALID_PAYLOAD|OWNER_NOT_GRANTED|DESTINATION_NOT_GRANTED|ACTION_NOT_FOUND|WRITE_READBACK_MISMATCH|INDEPENDENT_REVIEWER_REQUIRED|FACTORY_[A-Z0-9_]+|GREENHOUSE_[A-Z0-9_]+|TOOL_[A-Z0-9_]+)$/;
       return toolResult({ reason: known.test(error.message) ? error.message : 'WORK_OPERATION_FAILED' }, true);
     }
   }

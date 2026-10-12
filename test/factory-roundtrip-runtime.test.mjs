@@ -73,6 +73,7 @@ test('Factory round trip preserves Work/Checkpoint and stays UNKNOWN until DWARF
     ownerSystem: 'CITY_HALL',
     requestedBy: 'GO',
     workPassActor: 'GO',
+    intakeInformation: { completionCriteria: { items: [{ criterionId: 'factory-result', description: 'Factory result is verified and returned' }] } },
   });
 
   const handed = await city.handoff({
@@ -108,7 +109,7 @@ test('Factory round trip preserves Work/Checkpoint and stays UNKNOWN until DWARF
     evidenceRefs: [],
   });
   assert.equal(premature.state, WORK_STATE.RETURN_REVIEW);
-  assert.equal(premature.stationReturnReview.status, 'GO_REVIEW_REQUIRED');
+  assert.equal(premature.stationReturnReview.status, 'INDEPENDENT_REVIEW_REQUIRED');
   assert.equal(premature.stationReturnReview.verified, false);
   const firstOutAt = premature.journeys[0].outAt;
 
@@ -118,18 +119,10 @@ test('Factory round trip preserves Work/Checkpoint and stays UNKNOWN until DWARF
     checkpointId: 'CP-1',
     actor: 'GO',
   });
-  assert.equal(refreshed.state, WORK_STATE.RETURN_REVIEW);
+  assert.equal(refreshed.state, WORK_STATE.RETURNED);
   assert.equal(refreshed.stationReturnReview.verified, true);
   assert.equal(refreshed.journeys[0].outAt, firstOutAt);
-
-  const returned = await city.returnWork({
-    workId: 'WORK-1',
-    checkpointId: 'CP-1',
-    actor: 'GO',
-    stationReviewed: true,
-    updates: [],
-  });
-  assert.equal(returned.state, WORK_STATE.RETURNED);
+  const returned = refreshed;
   assert.equal(returned.return.verified, true);
   assert.equal(returned.return.evidenceRefs.includes('factory-station://receipt-1'), true);
   assert.equal(returned.return.readback.domainVerified, true);

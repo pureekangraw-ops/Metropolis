@@ -91,8 +91,14 @@ test('Legacy WORK READ also delegates to HERMES while preserving existing result
 
 test('HERMES can read a completed Work using the closed read-only Work Pass', async () => {
   const runtime = createCityRuntime({ store: createMemoryStore() });
-  await runtime.intake({ workId: 'W-CLOSED', ownerSystem: 'GO', workPassActor: 'GO' });
-  await runtime.completeWork({ workId: 'W-CLOSED', actor: 'MIMIR', requestedBy: 'GO' });
+  await runtime.intake({
+    workId: 'W-CLOSED', ownerSystem: 'GO', workPassActor: 'GO',
+    intakeInformation: { completionCriteria: { items: [{ criterionId: 'readable', description: 'Completed record is readable' }] } },
+  });
+  await runtime.completeWork({
+    workId: 'W-CLOSED', actor: 'MIMIR', requestedBy: 'GO',
+    criteriaResults: [{ criterionId: 'readable', status: 'PASS', evidenceRefs: ['test://closed-work'] }],
+  });
   const result = await rpc(service(runtime), 'metropolis_hermes_read', { workId: 'W-CLOSED' });
   assert.equal(result.isError, false);
   assert.equal(result.structuredContent.record.state, 'COMPLETED');
