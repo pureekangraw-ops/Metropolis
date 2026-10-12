@@ -11,6 +11,15 @@ const limit=v=>v===undefined?20:(Number.isInteger(v)&&v>=1&&v<=100?v:fail('TOOL_
 const escapeQ=v=>v.replace(/\\/g,'\\\\').replace(/'/g,"\\'");
 const plain=rich=>rich.map(x=>x.plain_text??x.text?.content??'').join('');
 const bounded=data=>{if(new TextEncoder().encode(JSON.stringify(data)).length>16384)fail('TOOL_RESULT_TOO_LARGE');return data;};
+function transportCode(error){
+ const message=String(error?.message||'');
+ if(/Illegal invocation|incorrect this/i.test(message))return 'FETCH_RECEIVER';
+ if(/redirect/i.test(message))return 'REDIRECT_MODE';
+ if(/DNS|resolve.*host/i.test(message))return 'DNS';
+ if(/abort/i.test(message))return 'ABORTED';
+ if(/network|fetch failed/i.test(message))return 'NETWORK';
+ return ['TypeError','RangeError'].includes(error?.name)?error.name.toUpperCase():'UNKNOWN';
+}
 export function validateDocumentOperation(stationId,operation,payload={}){
  if(!DOCUMENT_OPERATIONS[stationId]?.includes(operation))fail('TOOL_OPERATION_INVALID',true);
  if(!payload||typeof payload!=='object'||Array.isArray(payload))fail('TOOL_ARGUMENT_INVALID',true);
@@ -50,7 +59,7 @@ function createDocumentExecution({env,fetchImpl,clock,signal,state}){
  async function request(url,init,provider,{raw=false,beforeMutation=true}={}){
   if(signal.aborted)fail('DOCUMENT_OPERATION_TIMEOUT',!state.mutationStarted);
   if(!beforeMutation)state.mutationStarted=true;
-  let response;try{response=await fetchImpl(url,{...init,redirect:'error',signal});}catch{fail(provider+'_UNREACHABLE',beforeMutation&&!state.mutationStarted);}
+  let response;try{response=await fetchImpl(url,{...init,redirect:'error',signal});}catch(error){fail(provider+'_UNREACHABLE_'+transportCode(error),beforeMutation&&!state.mutationStarted);}
   if(!response.ok)fail(provider+'_HTTP_'+response.status,beforeMutation);
   if(Number(response.headers.get('content-length'))>65536)fail('TOOL_RESULT_TOO_LARGE',beforeMutation);
   const reader=response.body?.getReader();let size=0;const chunks=[];
