@@ -1,4 +1,10 @@
 export const WORK_PASS_VERSION = 'WORK_PASS_V1';
+// Two bounded bindings carry one explicit grant policy; Cloudflare limits each text value.
+export function configuredWorkGrants(env){
+ const sources=[env.MCP_WORK_GRANTS,env.MCP_DOCUMENT_WORK_GRANTS].map(value=>JSON.parse(value||'[]'));
+ if(sources.some(value=>!Array.isArray(value)))throw new Error('EXPLICIT_WORK_GRANTS_REQUIRED');
+ return sources.flat();
+}
 export const WORK_PASS_STATUS = Object.freeze({
   ACTIVE:'ACTIVE', CANCELLED:'CANCELLED', COMPLETED:'COMPLETED',
 });
