@@ -74,3 +74,7 @@ test('provider requests use manual redirect handling accepted by the deployed ru
  }});
  assert.equal((await s.DRIVE_STATION.execute({operation:'list',payload:{limit:1}})).verified,true);
 });
+test('OAuth rejection exposes only allowlisted error code, not provider description',async()=>{
+ const s=createDocumentStations({env,fetchImpl:async()=>new Response(JSON.stringify({error:'invalid_grant',error_description:'sensitive provider details'}),{status:400})});
+ await assert.rejects(()=>s.DRIVE_STATION.execute({operation:'list',payload:{}}),e=>e.message==='GOOGLE_OAUTH_HTTP_400_INVALID_GRANT'&&e.notSent===true);
+});

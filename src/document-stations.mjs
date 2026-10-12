@@ -60,12 +60,17 @@ function createDocumentExecution({env,fetchImpl,clock,signal,state}){
   if(signal.aborted)fail('DOCUMENT_OPERATION_TIMEOUT',!state.mutationStarted);
   if(!beforeMutation)state.mutationStarted=true;
   let response;try{response=await fetchImpl(url,{...init,redirect:'manual',signal});}catch(error){fail(provider+'_UNREACHABLE_'+transportCode(error),beforeMutation&&!state.mutationStarted);}
-  if(!response.ok)fail(provider+'_HTTP_'+response.status,beforeMutation);
+  if(!response.ok&&provider!=='GOOGLE_OAUTH')fail(provider+'_HTTP_'+response.status,beforeMutation);
   if(Number(response.headers.get('content-length'))>65536)fail('TOOL_RESULT_TOO_LARGE',beforeMutation);
   const reader=response.body?.getReader();let size=0;const chunks=[];
   if(reader){try{while(true){const r=await reader.read();if(r.done)break;size+=r.value.byteLength;if(size>65536){await reader.cancel();fail('TOOL_RESULT_TOO_LARGE',beforeMutation);}chunks.push(r.value);}}finally{reader.releaseLock();}}
   const bytes=new Uint8Array(size);let offset=0;for(const c of chunks){bytes.set(c,offset);offset+=c.length;}
-  const content=new TextDecoder().decode(bytes);if(raw)return content;
+  const content=new TextDecoder().decode(bytes);
+  if(!response.ok){
+   let code='';try{const r=JSON.parse(content);if(['invalid_grant','invalid_client','invalid_request','unauthorized_client','unsupported_grant_type','invalid_scope','access_denied','temporarily_unavailable'].includes(r.error))code='_'+r.error.toUpperCase();}catch{}
+   fail(provider+'_HTTP_'+response.status+code,beforeMutation);
+  }
+  if(raw)return content;
   try{return JSON.parse(content);}catch{fail(provider+'_RESPONSE_INVALID',beforeMutation);}
  }
  async function access(){
