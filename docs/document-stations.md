@@ -46,7 +46,9 @@ Do not expose/export secret values to move them. Set the same authorized token d
 in Metro's Worker secret settings if it is not already present.
 
 Requests use fixed provider origins, strict operation/parameter allowlists, bounded
-content, a 15-second per-request timeout, and a 16-KiB serialized result limit.
+content, a 22-second operation-wide deadline (below City Hall's 30-second gate),
+and a 16-KiB serialized result limit. The deadline aborts pending provider requests;
+only a timeout before any mutation was attempted can be classified as no-send.
 Large lists/blocks should use a smaller limit and cursor. Drive writes independently
 read back text; Notion writes independently read the created page/returned block IDs.
 Ambiguous writes stay OUTCOME_UNKNOWN for investigation and are never blindly retried.

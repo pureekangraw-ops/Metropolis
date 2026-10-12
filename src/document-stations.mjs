@@ -32,10 +32,25 @@ export function validateDocumentOperation(stationId,operation,payload={}){
  if(payload.limit!==undefined)limit(payload.limit);
  return Object.fromEntries(Object.entries(payload).filter(([k])=>allowed.includes(k)));
 }
-export function createDocumentStations({env,fetchImpl=fetch,clock=()=>Date.now()}={}){
+export function createDocumentStations({env,fetchImpl=fetch,clock=()=>Date.now(),operationTimeoutMs=22000}={}){
+ if(!Number.isFinite(operationTimeoutMs)||operationTimeoutMs<=0||operationTimeoutMs>22000)throw new Error('TOOL_TIMEOUT_INVALID');
+ async function execute(station,input){
+  const controller=new AbortController(),state={mutationStarted:false};let timer;
+  const timeout=new Promise((_,reject)=>{timer=setTimeout(()=>{
+   reject(Object.assign(new Error('DOCUMENT_OPERATION_TIMEOUT'),{notSent:!state.mutationStarted}));
+   controller.abort();
+  },operationTimeoutMs);});
+  const adapters=createDocumentExecution({env,fetchImpl,clock,signal:controller.signal,state});
+  try{return await Promise.race([adapters[station].execute(input),timeout]);}finally{clearTimeout(timer);}
+ }
+ return {DRIVE_STATION:{execute:input=>execute('DRIVE_STATION',input)},NOTION_STATION:{execute:input=>execute('NOTION_STATION',input)}};
+}
+function createDocumentExecution({env,fetchImpl,clock,signal,state}){
  let token=null,expires=0;
  async function request(url,init,provider,{raw=false,beforeMutation=true}={}){
-  let response;try{response=await fetchImpl(url,{...init,redirect:'error',signal:AbortSignal.timeout(15000)});}catch{fail(provider+'_UNREACHABLE',beforeMutation);}
+  if(signal.aborted)fail('DOCUMENT_OPERATION_TIMEOUT',!state.mutationStarted);
+  if(!beforeMutation)state.mutationStarted=true;
+  let response;try{response=await fetchImpl(url,{...init,redirect:'error',signal});}catch{fail(provider+'_UNREACHABLE',beforeMutation&&!state.mutationStarted);}
   if(!response.ok)fail(provider+'_HTTP_'+response.status,beforeMutation);
   if(Number(response.headers.get('content-length'))>65536)fail('TOOL_RESULT_TOO_LARGE',beforeMutation);
   const reader=response.body?.getReader();let size=0;const chunks=[];

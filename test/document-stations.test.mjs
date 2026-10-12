@@ -58,3 +58,12 @@ test('bounded transport rejects oversized provider results without claiming veri
  const s=createDocumentStations({env,fetchImpl:async()=>reply({results:[{text:'x'.repeat(18000)}]})});
  await assert.rejects(()=>s.NOTION_STATION.execute({operation:'search',payload:{}}),/TOOL_RESULT_TOO_LARGE/);
 });
+test('operation-wide deadline aborts a slow write and preserves ambiguous outcome',async()=>{
+ let aborted=false;
+ const s=createDocumentStations({env,operationTimeoutMs:30,fetchImpl:async(url,init)=>{
+  if(String(url).includes('oauth2'))return reply({access_token:'a',expires_in:3600});
+  return new Promise((resolve,reject)=>{init.signal.addEventListener('abort',()=>{aborted=true;reject(new Error('aborted'));},{once:true});});
+ }});
+ await assert.rejects(()=>s.DRIVE_STATION.execute({operation:'create_text',payload:{name:'Test',text:'note'}}),e=>e.notSent===false);
+ assert.equal(aborted,true);
+});
