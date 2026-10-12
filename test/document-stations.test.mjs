@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createDocumentStations} from '../src/document-stations.mjs';
-const env={GOOGLE_CLIENT_ID:'client',GOOGLE_CLIENT_SECRET:'secret',GOOGLE_REFRESH_TOKEN:'refresh',GOOGLE_DRIVE_ROOT_FOLDER_ID:'root',NOTION_TOKEN:'notion-secret'};
+const env={GOOGLE_CLIENT_ID:'client',GOOGLE_CLIENT_SECRET:'secret',GOOGLE_REFRESH_TOKEN:'refresh',GOOGLE_DRIVE_ROOT_FOLDER_ID:'root',NOTION_TOKEN_SECRET:'notion-secret'};
 const reply=v=>new Response(JSON.stringify(v),{headers:{'content-type':'application/json'}});
 test('Drive search refreshes only inside Metro and constrains query to owner root',async()=>{
  const calls=[];
@@ -31,6 +31,11 @@ test('Drive create_text verifies provider file content independently',async()=>{
 });
 test('Notion missing credential proves no provider request was sent',async()=>{
  let calls=0;const s=createDocumentStations({env:{},fetchImpl:async()=>{calls++;}});
+ await assert.rejects(()=>s.NOTION_STATION.execute({operation:'search',payload:{query:'GO'}}),e=>e.message==='NOTION_NOT_CONFIGURED'&&e.notSent===true);
+ assert.equal(calls,0);
+});
+test('Notion ignores the obsolete binding name instead of sending an unconfigured request',async()=>{
+ let calls=0;const s=createDocumentStations({env:{NOTION_TOKEN:'legacy'},fetchImpl:async()=>{calls++;}});
  await assert.rejects(()=>s.NOTION_STATION.execute({operation:'search',payload:{query:'GO'}}),e=>e.message==='NOTION_NOT_CONFIGURED'&&e.notSent===true);
  assert.equal(calls,0);
 });

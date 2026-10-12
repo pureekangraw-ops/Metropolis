@@ -125,8 +125,8 @@ function createDocumentExecution({env,fetchImpl,clock,signal,state}){
   return {verified:true,data:bounded(data),observedAt:new Date(clock()).toISOString()};
  }
  async function notion(path,method='GET',body,beforeMutation=true){
-  if(!env.NOTION_TOKEN)fail('NOTION_NOT_CONFIGURED',true);
-  return request('https://api.notion.com/v1'+path,{method,headers:{authorization:'Bearer '+env.NOTION_TOKEN,'notion-version':'2025-09-03','content-type':'application/json'},...(body===undefined?{}:{body:JSON.stringify(body)})},'NOTION',{beforeMutation});
+  if(!env.NOTION_TOKEN_SECRET)fail('NOTION_NOT_CONFIGURED',true);
+  return request('https://api.notion.com/v1'+path,{method,headers:{authorization:'Bearer '+env.NOTION_TOKEN_SECRET,'notion-version':'2025-09-03','content-type':'application/json'},...(body===undefined?{}:{body:JSON.stringify(body)})},'NOTION',{beforeMutation});
  }
  async function executeNotion({operation,payload={}}){
   const p=validateDocumentOperation('NOTION_STATION',operation,payload);let data;
