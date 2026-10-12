@@ -6,6 +6,7 @@ import { createFactoryStationRuntime } from './factory-station-runtime.mjs';
 import { createTabletRuntime } from './tablet-runtime.mjs';
 import { createObservatoryStation } from './observatory-station.mjs';
 import { railRequest, verifyRail, createGreenhouseConveyor } from './greenhouse-conveyor.mjs';
+import {createDocumentStations} from './document-stations.mjs';
 import { inspectWorkPass } from './work-pass.mjs';
 
 export async function bufferRequest(request, { timeoutMs = 10000, maxBytes = 65536 } = {}) {
@@ -112,11 +113,17 @@ export function createGateway({ env, storage, sourceSha = SOURCE_SHA } = {}) {
       }, OBSERVATORY_STATION: {
         handoff: input => conveyor.observation.handoff(input),
         readback: input => conveyor.observation.readback(input),
+      }, DRIVE_STATION: {
+        handoff: input => conveyor.documents.handoff(input),
+        readback: input => conveyor.documents.readback(input),
+      }, NOTION_STATION: {
+        handoff: input => conveyor.documents.handoff(input),
+        readback: input => conveyor.documents.readback(input),
       } },
       tabletRuntime,
     });
     observatory = createObservatoryStation({ env, storage, runtime });
-    conveyor = createGreenhouseConveyor({env,storage,runtime,factory:factoryStation,observatory});
+    conveyor = createGreenhouseConveyor({env,storage,runtime,factory:factoryStation,observatory,documents:createDocumentStations({env})});
     oauth = createOAuthHandler(cfg);
     resourceMetadataUrl = cfg.issuer + '/.well-known/oauth-protected-resource';
     authenticateMcp = async request => {
