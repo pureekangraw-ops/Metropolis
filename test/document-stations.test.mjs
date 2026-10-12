@@ -67,3 +67,10 @@ test('operation-wide deadline aborts a slow write and preserves ambiguous outcom
  await assert.rejects(()=>s.DRIVE_STATION.execute({operation:'create_text',payload:{name:'Test',text:'note'}}),e=>e.notSent===false);
  assert.equal(aborted,true);
 });
+test('provider requests use manual redirect handling accepted by the deployed runtime',async()=>{
+ const s=createDocumentStations({env,fetchImpl:async(url,init)=>{
+  if(init.redirect!=='manual')throw new TypeError('redirect mode is not supported');
+  return String(url).includes('oauth2')?reply({access_token:'a',expires_in:3600}):reply({files:[]});
+ }});
+ assert.equal((await s.DRIVE_STATION.execute({operation:'list',payload:{limit:1}})).verified,true);
+});

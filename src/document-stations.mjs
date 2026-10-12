@@ -59,7 +59,7 @@ function createDocumentExecution({env,fetchImpl,clock,signal,state}){
  async function request(url,init,provider,{raw=false,beforeMutation=true}={}){
   if(signal.aborted)fail('DOCUMENT_OPERATION_TIMEOUT',!state.mutationStarted);
   if(!beforeMutation)state.mutationStarted=true;
-  let response;try{response=await fetchImpl(url,{...init,redirect:'error',signal});}catch(error){fail(provider+'_UNREACHABLE_'+transportCode(error),beforeMutation&&!state.mutationStarted);}
+  let response;try{response=await fetchImpl(url,{...init,redirect:'manual',signal});}catch(error){fail(provider+'_UNREACHABLE_'+transportCode(error),beforeMutation&&!state.mutationStarted);}
   if(!response.ok)fail(provider+'_HTTP_'+response.status,beforeMutation);
   if(Number(response.headers.get('content-length'))>65536)fail('TOOL_RESULT_TOO_LARGE',beforeMutation);
   const reader=response.body?.getReader();let size=0;const chunks=[];
