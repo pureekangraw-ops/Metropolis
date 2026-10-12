@@ -10,8 +10,10 @@ export function projectWorkTracking(record, { observedAt = new Date().toISOStrin
   const returned = Boolean(record.return || journey?.status === 'RETURNED');
   const terminal = TERMINAL.has(text(record.state).toUpperCase());
   const workerEvidence = external?.domainVerified === true || report?.result?.domainVerified === true;
+  const workerState = text(report?.result?.execution).toUpperCase();
+  const active = ['RUNNING', 'EXECUTING', 'IN_PROGRESS'].includes(workerState) && report?.result?.verified === true;
   const transportVerified = external?.boundaryVerified === true && external?.verified === true;
-  const execution = terminal ? 'CLOSED' : returned ? 'RETURNED' : workerEvidence ? 'VERIFIED' : handoff ? 'UNKNOWN' : 'NOT_DISPATCHED';
+  const execution = terminal ? 'CLOSED' : returned ? 'RETURNED' : workerEvidence ? 'VERIFIED' : active ? 'RUNNING' : handoff ? 'UNKNOWN' : 'NOT_DISPATCHED';
   return Object.freeze({
     schema: 'HERMES_WORK_TRACKING_V1',
     workId: record.workId,
