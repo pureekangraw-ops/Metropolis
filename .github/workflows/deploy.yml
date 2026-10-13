@@ -10,6 +10,8 @@ concurrency:
   cancel-in-progress: false
 jobs:
   deploy:
+    # BIG ordered GitHub deployment disconnected; retain job for reversible restoration.
+    if: ${{ false }}
     runs-on: ubuntu-latest
     environment: production
     steps:
