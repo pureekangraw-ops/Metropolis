@@ -99,6 +99,12 @@ export function createGateway({ env, storage, sourceSha = SOURCE_SHA } = {}) {
     });
     runtime = createCityRuntime({
       sourceSha,
+      // Exact pre-v1 source revisions only. Keep unset until the read-only
+      // legacy inventory has been reviewed; unknown provenance fails closed.
+      legacySourceShas: (env.HALL_LEGACY_SOURCE_SHAS || '')
+        .split(',')
+        .map(value => value.trim())
+        .filter(Boolean),
       store: {
         get: key => storage.get(key),
         async put(key, value) { await storage.put(key, value); return value; },

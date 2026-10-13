@@ -464,8 +464,10 @@ test('MIMIR CANCEL makes persisted Work Pass read-only, takes Work offline and b
 });
 
 test('READY TO RESUME gates SEARCH then resumes the existing Work ID and checkpoint', async () => {
-  const runtime = createCityRuntime({ store: createMemoryStore() });
-  await runtime.intake({
+  const store = createMemoryStore();
+  const legacySourceSha = 'a'.repeat(40);
+  const runtime = createCityRuntime({ store, legacySourceShas: [legacySourceSha] });
+  const created = await runtime.intake({
     workId: 'WORK-EXISTING',
     checkpointId: 'WORK-EXISTING:CP-07',
     ownerSystem: 'FACTORY',
@@ -473,6 +475,10 @@ test('READY TO RESUME gates SEARCH then resumes the existing Work ID and checkpo
     intakeDraftId: 'DRAFT-OLD',
     intakeInformation: { title: 'Existing Work', summary: 'Resume me' },
   });
+  const legacyRecord = { ...created };
+  delete legacyRecord.completionContractVersion;
+  delete legacyRecord.completionCriteria;
+  await store.put(`work:${created.workId}`, { ...legacyRecord, sourceSha: legacySourceSha });
   const server = service('one', runtime, []);
 
   const input = (await (await rpc(server, 'tools/call', {

@@ -6,7 +6,9 @@ import {
   WORK_STATE,
 } from '../src/city-runtime.mjs';
 import {
+  dryRunCompletionContractMigration,
   evaluateCompletionCriteria,
+  inspectCompletionContract,
   normalizeCompletionCriteria,
 } from '../src/work-completion.mjs';
 
@@ -16,6 +18,8 @@ const criteria = {
     { criterionId: 'tests', description: 'The contract tests pass' },
   ],
 };
+const legacySourceSha = 'a'.repeat(40);
+const unreviewedSourceSha = 'b'.repeat(40);
 
 test('completion criteria require stable identifiers and descriptions', () => {
   const normalized = normalizeCompletionCriteria(criteria, { allowMissing: false });
@@ -23,6 +27,99 @@ test('completion criteria require stable identifiers and descriptions', () => {
   assert.equal(normalized.items.length, 2);
   assert.throws(() => normalizeCompletionCriteria(null, { allowMissing: false }), /COMPLETION_CRITERIA_REQUIRED/);
   assert.throws(() => normalizeCompletionCriteria({ items: [{ criterionId: 'x', description: 'one' }, { criterionId: 'x', description: 'two' }] }), /COMPLETION_CRITERION_ID_DUPLICATE/);
+});
+
+test('unversioned Work is legacy only with exact verified source provenance', () => {
+  const legacy = { workId: 'WORK-OLD', state: 'RECEIVED', sourceSha: legacySourceSha };
+  assert.equal(inspectCompletionContract(legacy).reason, 'LEGACY_PROVENANCE_UNVERIFIED');
+  assert.equal(inspectCompletionContract(legacy, { legacySourceShas: [legacySourceSha] }).classification, 'LEGACY');
+  assert.equal(inspectCompletionContract({
+    ...legacy,
+    completionCriteria: null,
+  }, { legacySourceShas: [legacySourceSha] }).reason, 'COMPLETION_CONTRACT_VERSION_REQUIRED');
+  assert.equal(inspectCompletionContract({
+    ...legacy,
+    completionContractVersion: 'HALL_COMPLETION_V99',
+  }, { legacySourceShas: [legacySourceSha] }).reason, 'COMPLETION_CONTRACT_VERSION_UNSUPPORTED');
+  assert.equal(inspectCompletionContract({
+    ...legacy,
+    completionContractVersion: 'HALL_COMPLETION_V1',
+  }, { legacySourceShas: [legacySourceSha] }).reason, 'COMPLETION_CRITERIA_REQUIRED');
+});
+
+test('legacy completion preserves the pre-v1 lifecycle only for verified revisions', async () => {
+  const records = new Map([['work:WORK-LEGACY', {
+    kind: 'WORK_RECORD',
+    workId: 'WORK-LEGACY',
+    checkpointId: 'WORK-LEGACY:CP-01',
+    ownerSystem: 'FACTORY',
+    state: WORK_STATE.RECEIVED,
+    sourceSha: legacySourceSha,
+    history: [{ state: WORK_STATE.RECEIVED, at: '2026-10-01T00:00:00.000Z' }],
+  }]]);
+  let writes = 0;
+  const store = {
+    async get(key) { return structuredClone(records.get(key)); },
+    async put(key, value) { writes += 1; records.set(key, structuredClone(value)); return value; },
+    async list(prefix = '') { return [...records.entries()].filter(([key]) => key.startsWith(prefix)).map(([key, value]) => ({ key, value: structuredClone(value) })); },
+  };
+  const runtime = createCityRuntime({
+    store,
+    legacySourceShas: [legacySourceSha],
+    clock: () => '2026-10-13T01:30:00.000Z',
+  });
+
+  const preflight = await runtime.inspectWorkCompletionContract({ workId: 'WORK-LEGACY' });
+  assert.equal(preflight.classification, 'LEGACY');
+  assert.equal(writes, 0, 'contract preflight is read-only');
+
+  const completed = await runtime.completeWork({ workId: 'WORK-LEGACY' });
+  assert.equal(completed.state, WORK_STATE.COMPLETED);
+  assert.equal(completed.completionCheck, undefined);
+  assert.equal(completed.completion.completedAt, '2026-10-13T01:30:00.000Z');
+});
+
+test('unknown or malformed legacy provenance blocks resume and completion without writes', async () => {
+  const candidates = [
+    { workId: 'WORK-UNKNOWN-SHA', sourceSha: unreviewedSourceSha },
+    { workId: 'WORK-MALFORMED', sourceSha: legacySourceSha, completionCriteria: null },
+    { workId: 'WORK-UNKNOWN-VERSION', sourceSha: legacySourceSha, completionContractVersion: 'HALL_COMPLETION_V99' },
+  ];
+  const records = new Map(candidates.map(record => [`work:${record.workId}`, {
+    kind: 'WORK_RECORD',
+    checkpointId: `${record.workId}:CP-01`,
+    ownerSystem: 'FACTORY',
+    state: WORK_STATE.RECEIVED,
+    history: [],
+    ...record,
+  }]));
+  let writes = 0;
+  const store = {
+    async get(key) { return structuredClone(records.get(key)); },
+    async put(key, value) { writes += 1; records.set(key, structuredClone(value)); return value; },
+    async list(prefix = '') { return [...records.entries()].filter(([key]) => key.startsWith(prefix)).map(([key, value]) => ({ key, value: structuredClone(value) })); },
+  };
+  const runtime = createCityRuntime({ store, legacySourceShas: [legacySourceSha] });
+
+  for (const candidate of candidates) {
+    const result = await runtime.inspectWorkCompletionContract({ workId: candidate.workId });
+    assert.equal(result.classification, 'BLOCKED');
+    await assert.rejects(() => runtime.resumeWork({ workId: candidate.workId }), /LEGACY_PROVENANCE_UNVERIFIED|COMPLETION_CONTRACT_VERSION_REQUIRED|COMPLETION_CONTRACT_VERSION_UNSUPPORTED/);
+    await assert.rejects(() => runtime.completeWork({ workId: candidate.workId }), /LEGACY_PROVENANCE_UNVERIFIED|COMPLETION_CONTRACT_VERSION_REQUIRED|COMPLETION_CONTRACT_VERSION_UNSUPPORTED/);
+  }
+  assert.equal(writes, 0, 'blocked read-only preflight must not update Work or signals');
+});
+
+test('migration dry-run classifies without writing and leaves unverified sources unresolved', async () => {
+  const records = [
+    { workId: 'WORK-LEGACY', state: 'RECEIVED', sourceSha: legacySourceSha },
+    { workId: 'WORK-UNKNOWN', state: 'RECEIVED', sourceSha: unreviewedSourceSha },
+    { workId: 'WORK-V1', state: 'RECEIVED', sourceSha: 'current', completionContractVersion: 'HALL_COMPLETION_V1', completionCriteria: criteria },
+  ];
+  const result = dryRunCompletionContractMigration(records, { legacySourceShas: [legacySourceSha] });
+  assert.equal(result.mode, 'READ_ONLY');
+  assert.deepEqual(result.counts, { LEGACY: 1, BLOCKED: 1, V1: 1 });
+  assert.equal(result.entries.find(row => row.workId === 'WORK-UNKNOWN').reason, 'LEGACY_PROVENANCE_UNVERIFIED');
 });
 
 test('completion check stays open until every criterion is PASS with evidence', async () => {

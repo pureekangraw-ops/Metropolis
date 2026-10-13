@@ -37,7 +37,14 @@ MIMIR `complete` receives a `criteriaResults` array. Every Work criterion must h
 
 If a Work has a handoff, completion is blocked until the Work has a verified `RETURNED` result. An accepted completion check is the only route to `COMPLETED`; `TOOL_DONE` and a transport receipt are not substitutes.
 
-For Work records created before this contract, missing criteria remain unknown; this implementation does not invent acceptance conditions. Such Work cannot be completed by the v1 gate until its criteria are supplied through an owner-approved migration or a new Work.
+For pre-v1 Work, the pre-contract completion lifecycle is preserved only when `sourceSha` exactly matches an explicitly configured, independently verified `HALL_LEGACY_SOURCE_SHAS` entry. The legacy path does not invent criteria, PASS results, or evidence. Missing version alone is not enough to classify a Work as legacy:
+
+- A v1 version requires valid v1 criteria.
+- An unknown or malformed version is rejected.
+- Criteria without a version are rejected as malformed.
+- A record with neither v1 field is legacy only when its exact `sourceSha` is on the verified allowlist; otherwise it is blocked as `LEGACY_PROVENANCE_UNVERIFIED`.
+
+Resume performs this contract inspection read-only before changing online state. `dryRunCompletionMigration` likewise only classifies records and reports counts; it does not alter Work. Before merge, the source-SHA allowlist must come from a reviewed, adequately scoped inventory. A partial arrival snapshot is not a complete census, and unverified revisions must remain blocked rather than be guessed legacy.
 
 ## Typed ToolSignal events
 
@@ -78,4 +85,4 @@ Only a different authenticated actor from the actor who submitted the return can
 
 ## Verification boundary
 
-This contract is covered by local unit tests on the feature branch. Branch verification is not a production readback. Merge, deploy, and live lifecycle changes remain out of scope until separately authorized.
+This contract is covered by local unit tests on the feature branch. Branch verification is not a production readback. Merge, deploy, and live lifecycle changes remain out of scope until separately authorized. The feature branch must not merge while the legacy provenance inventory is incomplete or the migration dry-run reports unresolved records.

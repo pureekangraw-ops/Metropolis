@@ -15,8 +15,11 @@ import { cancelWorkPass, completeWorkPass, createWorkPass, workPassRef } from '.
 import { createWorkStateSignalLine, WORK_SIGNAL_STATUS } from './work-state-signal.mjs';
 import { createToolSignalLine } from './tool-signal-line.mjs';
 import {
+  assertCompletionContract,
   completionReviewTriggers,
+  dryRunCompletionContractMigration,
   evaluateCompletionCriteria,
+  inspectCompletionContract,
   normalizeCompletionCriteria,
 } from './work-completion.mjs';
 
@@ -57,8 +60,13 @@ export function createCityMap() {
   });
 }
 
-export function createCityRuntime({ store = createMemoryStore(), clock = () => new Date().toISOString(), idFactory = () => crypto.randomUUID(), sourceSha = 'UNKNOWN', stationRuntimes = {}, tabletRuntime = null } = {}) {
+export function createCityRuntime({ store = createMemoryStore(), clock = () => new Date().toISOString(), idFactory = () => crypto.randomUUID(), sourceSha = 'UNKNOWN', legacySourceShas = [], stationRuntimes = {}, tabletRuntime = null } = {}) {
   if (!store || typeof store.get !== 'function' || typeof store.put !== 'function') throw new TypeError('store_REQUIRED');
+  if (!Array.isArray(legacySourceShas)
+    || legacySourceShas.some(value => typeof value !== 'string' || !/^[a-f0-9]{40}$/.test(value.trim()))) {
+    throw new TypeError('LEGACY_SOURCE_SHAS_INVALID');
+  }
+  const trustedLegacySourceShas = Object.freeze([...new Set(legacySourceShas.map(value => value.trim()))]);
   const mailboxes = new Map();
   const stations = Object.freeze({ ...stationRuntimes });
   const workStateSignals = createWorkStateSignalLine({ store, clock });
@@ -148,6 +156,8 @@ export function createCityRuntime({ store = createMemoryStore(), clock = () => n
     const id=text(workId,'workId'); const record=await store.get(`work:${id}`);
     if(!record) throw new Error('WORK_NOT_FOUND');
     if([WORK_STATE.CANCELLED,WORK_STATE.COMPLETED].includes(record.state)) throw new Error('WORK_CLOSED');
+    // Read-only preflight: never infer legacy from missing v1 fields alone.
+    assertCompletionContract(record, { legacySourceShas: trustedLegacySourceShas });
     const now=clock();
     const next={...record,online:{status:'ONLINE',activation:'RESUME',announcedBy:'HERMES',activatedAt:now,lastAnnouncedAt:now},
       history:[...(record.history||[]),{event:'WORK_ONLINE',activation:'RESUME',at:now}],updatedAt:now};
@@ -310,11 +320,24 @@ export function createCityRuntime({ store = createMemoryStore(), clock = () => n
     return clone(next);
   }
   async function completeWork({workId,actor='MIMIR',requestedBy=null,criteriaResults=[]}={}) {
-    const id=text(workId,'workId'); const record=await store.get(`work:${id}`); if(!record) throw new Error('WORK_NOT_FOUND'); if(record.state===WORK_STATE.COMPLETED) return clone(record); if(record.state===WORK_STATE.CANCELLED) throw new Error('WORK_CANCELLED');
-    if(!record.completionCriteria) throw new Error('COMPLETION_CRITERIA_REQUIRED');
+    const id=text(workId,'workId'); const record=await store.get(`work:${id}`); if(!record) throw new Error('WORK_NOT_FOUND');
+    const contract = assertCompletionContract(record, { legacySourceShas: trustedLegacySourceShas });
+    if(record.state===WORK_STATE.COMPLETED) return clone(record);
+    if(record.state===WORK_STATE.CANCELLED) throw new Error('WORK_CANCELLED');
+    if (contract.classification === 'LEGACY') {
+      // Preserve the pre-v1 lifecycle exactly for records with verified provenance.
+      const now=clock(); const next={...record,state:WORK_STATE.COMPLETED,online:{...(record.online||{}),status:'OFFLINE',closure:'COMPLETE',closedAt:now,closedBy:'MIMIR'},
+        workPass:completeWorkPass(record.workPass,{completedAt:now,completedBy:'MIMIR'}),completion:{actor:'MIMIR',requestedBy:requestedBy||actor,completedAt:now},history:[...(record.history||[]),{state:WORK_STATE.COMPLETED,actor:'MIMIR',at:now}],updatedAt:now};
+      await store.put(`work:${id}`,next);
+      await workStateSignals.publish({
+        workId:id, checkpointId:record.checkpointId, status:WORK_SIGNAL_STATUS.OFFLINE, publisher:'MIMIR',
+        workState:WORK_STATE.COMPLETED, reason:'COMPLETE',
+      });
+      return clone(next);
+    }
     if(record.handoff&&(!record.return||record.state!==WORK_STATE.RETURNED||record.return.verified!==true)) throw new Error('WORK_NOT_RETURNED');
     const now=clock();
-    const completionCheck=evaluateCompletionCriteria(record.completionCriteria,criteriaResults,{assessedAt:now,assessedBy:'MIMIR'});
+    const completionCheck=evaluateCompletionCriteria(contract.criteria,criteriaResults,{assessedAt:now,assessedBy:'MIMIR'});
     if(completionCheck.status!=='PASS'){
       const next={...record,completionCheck,history:[...(record.history||[]),{event:'COMPLETION_CHECK',status:completionCheck.status,actor:'MIMIR',at:now}],updatedAt:now};
       await store.put(`work:${id}`,next);
@@ -333,6 +356,18 @@ export function createCityRuntime({ store = createMemoryStore(), clock = () => n
   async function getWorkSignal(workId) { return workStateSignals.getCurrent(workId); }
   async function listWorkSignals() { return workStateSignals.listCurrent(); }
   async function listWorkSignalHistory(workId) { return workStateSignals.listHistory(workId); }
+  async function inspectWorkCompletionContract({workId}={}) {
+    const id=text(workId,'workId'); const record=await store.get(`work:${id}`);
+    if(!record) throw new Error('WORK_NOT_FOUND');
+    return inspectCompletionContract(record, { legacySourceShas: trustedLegacySourceShas });
+  }
+  async function dryRunCompletionMigration() {
+    if(typeof store.list!=='function') throw new Error('WORK_LIST_NOT_SUPPORTED');
+    const rows=await store.list('work:');
+    return dryRunCompletionContractMigration(rows.map(row=>row?.value).filter(Boolean), {
+      legacySourceShas: trustedLegacySourceShas,
+    });
+  }
 
   const reception = createHermesIntakeDesk({
     store,
@@ -347,5 +382,5 @@ export function createCityRuntime({ store = createMemoryStore(), clock = () => n
 
   async function health() { return { service: 'metropolis', status: 'READY', sourceSha, components: Object.fromEntries(CITY_COMPONENTS.map((component) => [component, { status: 'READY' }])), mailboxCount: [...mailboxes.values()].filter((mailbox) => mailbox.status === MAILBOX_STATUS.OPEN).length, observedAt: clock() }; }
 
-  return Object.freeze({ intake, resumeWork, handoff, returnWork, cancelWork, completeWork, registerMailbox, sendCargo, getWork, listWorks, getWorkSignal, listWorkSignals, listWorkSignalHistory, toolSignals, reception, health, map: createCityMap() });
+  return Object.freeze({ intake, resumeWork, handoff, returnWork, cancelWork, completeWork, registerMailbox, sendCargo, getWork, listWorks, getWorkSignal, listWorkSignals, listWorkSignalHistory, inspectWorkCompletionContract, dryRunCompletionMigration, toolSignals, reception, health, map: createCityMap() });
 }

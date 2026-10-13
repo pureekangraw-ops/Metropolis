@@ -1,4 +1,5 @@
 export const WORK_COMPLETION_CRITERIA_SCHEMA = 'WORK_COMPLETION_CRITERIA_V1';
+export const HALL_COMPLETION_CONTRACT_VERSION = 'HALL_COMPLETION_V1';
 export const WORK_COMPLETION_RESULT_STATUS = Object.freeze(['PASS', 'FAIL', 'UNKNOWN']);
 export const WORK_REVIEW_TRIGGERS = Object.freeze([
   'RECOVERY',
@@ -14,6 +15,92 @@ export const WORK_REVIEW_TRIGGERS = Object.freeze([
 const text = value => typeof value === 'string' ? value.trim() : '';
 const unique = values => [...new Set(values)];
 const clone = value => value == null ? value : structuredClone(value);
+
+/**
+ * Resolve a record's completion contract without changing the record.
+ * Missing contract fields are legacy only when the record's creation source
+ * is present in an explicitly verified pre-v1 source-SHA allowlist.
+ */
+export function inspectCompletionContract(record, { legacySourceShas = [] } = {}) {
+  if (!record || typeof record !== 'object' || Array.isArray(record)) {
+    return Object.freeze({ classification: 'BLOCKED', reason: 'WORK_RECORD_INVALID' });
+  }
+
+  if (Object.hasOwn(record, 'completionContractVersion')) {
+    if (record.completionContractVersion !== HALL_COMPLETION_CONTRACT_VERSION) {
+      return Object.freeze({
+        classification: 'BLOCKED',
+        reason: 'COMPLETION_CONTRACT_VERSION_UNSUPPORTED',
+        version: record.completionContractVersion,
+      });
+    }
+    try {
+      const criteria = normalizeCompletionCriteria(record.completionCriteria, { allowMissing: false });
+      return Object.freeze({
+        classification: 'V1',
+        version: HALL_COMPLETION_CONTRACT_VERSION,
+        criteria,
+      });
+    } catch (error) {
+      return Object.freeze({
+        classification: 'BLOCKED',
+        reason: error?.message || 'COMPLETION_CRITERIA_INVALID',
+        version: HALL_COMPLETION_CONTRACT_VERSION,
+      });
+    }
+  }
+
+  // A criteria field without its version is malformed, not evidence of legacy.
+  if (Object.hasOwn(record, 'completionCriteria')) {
+    return Object.freeze({ classification: 'BLOCKED', reason: 'COMPLETION_CONTRACT_VERSION_REQUIRED' });
+  }
+
+  const trustedLegacySources = new Set(
+    (Array.isArray(legacySourceShas) ? legacySourceShas : [])
+      .filter(value => typeof value === 'string')
+      .map(value => value.trim())
+      .filter(value => /^[a-f0-9]{40}$/.test(value)),
+  );
+  if (typeof record.sourceSha === 'string'
+    && /^[a-f0-9]{40}$/.test(record.sourceSha.trim())
+    && trustedLegacySources.has(record.sourceSha.trim())) {
+    return Object.freeze({
+      classification: 'LEGACY',
+      sourceSha: record.sourceSha.trim(),
+    });
+  }
+  return Object.freeze({ classification: 'BLOCKED', reason: 'LEGACY_PROVENANCE_UNVERIFIED' });
+}
+
+export function dryRunCompletionContractMigration(records, options = {}) {
+  const rows = Array.isArray(records) ? records : [];
+  const entries = rows.map(record => {
+    const inspection = inspectCompletionContract(record, options);
+    return Object.freeze({
+      workId: typeof record?.workId === 'string' ? record.workId : null,
+      state: typeof record?.state === 'string' ? record.state : null,
+      sourceSha: typeof record?.sourceSha === 'string' ? record.sourceSha : null,
+      classification: inspection.classification,
+      ...(inspection.reason ? { reason: inspection.reason } : {}),
+    });
+  });
+  const counts = entries.reduce((result, entry) => {
+    result[entry.classification] = (result[entry.classification] || 0) + 1;
+    return result;
+  }, {});
+  return Object.freeze({
+    mode: 'READ_ONLY',
+    total: entries.length,
+    counts: Object.freeze(counts),
+    entries: Object.freeze(entries),
+  });
+}
+
+export function assertCompletionContract(record, options = {}) {
+  const inspection = inspectCompletionContract(record, options);
+  if (inspection.classification === 'BLOCKED') throw new Error(inspection.reason);
+  return inspection;
+}
 
 export function normalizeCompletionCriteria(value, { allowMissing = true } = {}) {
   if (value == null) {

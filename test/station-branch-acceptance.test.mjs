@@ -24,7 +24,8 @@ test('Station Branch golden path: ONLINE -> IN -> work -> OUT -> PIXIE -> GO -> 
 });
 test('HERMES resume re-announces the same Work online and Journey ID is searchable for recovery',async()=>{
  const runtime=createCityRuntime({store:createMemoryStore(),clock:()=> '2026-10-07T12:00:00.000Z'});
- const created=await runtime.intake({workId:'WORK-RECOVER',checkpointId:'WORK-RECOVER:CP-01',ownerSystem:'FACTORY',requestedBy:'GO',workPassActor:'GO'});
+ const created=await runtime.intake({workId:'WORK-RECOVER',checkpointId:'WORK-RECOVER:CP-01',ownerSystem:'FACTORY',requestedBy:'GO',workPassActor:'GO',
+  intakeInformation:{completionCriteria:{items:[{criterionId:'resume',description:'Work remains resumable under its v1 contract'}]}}});
  const sent=await runtime.handoff({workId:created.workId,checkpointId:created.checkpointId,stationId:'FACTORY_STATION',operation:'TEST',actor:'GO'});
  const resumed=await runtime.resumeWork({workId:created.workId,actor:'GO'});
  assert.equal(resumed.workId,created.workId); assert.equal(resumed.checkpointId,created.checkpointId); assert.equal(resumed.online.activation,'RESUME'); assert.equal(sent.journeys[0].journeyId,'WORK-RECOVER:JOURNEY:1');
