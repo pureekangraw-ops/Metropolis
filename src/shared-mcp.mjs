@@ -352,8 +352,9 @@ export function createMetropolisMcp({
       try {
         if (!schemaMatches(args, hermesReadInputSchema)) throw new Error('INVALID_ARGUMENT');
         const result = await hermesReader.read({ actor, workId: args.workId });
-        return toolResult({ ...result,
-          ...(typeof jobStatus==='function'?{deliveries:await jobStatus(result.record)}:{}),
+        const deliveries = typeof jobStatus === 'function' ? await jobStatus(result.record) : [];
+        return toolResult({ ...result, deliveries,
+          tracking: { ...result.tracking, deliveries, freshness: 'SNAPSHOT' },
         });
       } catch (error) {
         const allowed = new Set(['INVALID_ARGUMENT', 'WORK_ID_REQUIRED', 'ACTOR_REQUIRED', 'WORK_NOT_FOUND', 'NO_GRANT', 'READBACK_MISMATCH']);

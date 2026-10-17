@@ -55,6 +55,9 @@ test('GO asks HERMES to read one authorized Work without mutating its truth', as
   assert.equal(result.readbackVerified, true);
   assert.equal(result.workTruthChanged, false);
   assert.equal(result.record.workId, 'W-GO-READ');
+  assert.equal(result.tracking.workId, 'W-GO-READ');
+  assert.equal(result.tracking.execution, 'NOT_DISPATCHED');
+  assert.equal(result.tracking.freshness, 'SNAPSHOT');
   assert.deepEqual(await runtime.getWork('W-GO-READ'), before);
 });
 
@@ -120,6 +123,8 @@ test('HERMES exposes latest correlated station deliveries without treating recei
     jobStatus: async work => { calls++; assert.equal(work.workId, 'W-OBS'); return deliveries; } });
   const reply = await rpc(server, 'metropolis_hermes_read', { workId: 'W-OBS' });
   assert.deepEqual(reply.structuredContent.deliveries, deliveries);
+  assert.deepEqual(reply.structuredContent.tracking.deliveries, deliveries);
+  assert.equal(reply.structuredContent.tracking.freshness, 'SNAPSHOT');
   assert.equal(reply.structuredContent.ownerExecutionVerified, false);
   assert.deepEqual(await runtime.getWork('W-OBS'), before);
   await rpc(server, 'metropolis_hermes_read', { workId: 'W-OBS' }, 'light');

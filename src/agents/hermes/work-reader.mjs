@@ -1,3 +1,4 @@
+import { projectWorkTracking } from '../../work-tracking.mjs';
 // HERMES reads existing Work truth on behalf of an authorized GO/LIGHT actor.
 // It does not own Work state, mint authority, or mutate a Work record.
 const nonBlank = (value, name) => {
@@ -28,6 +29,7 @@ export function createHermesWorkReader({ getWork, mayRead } = {}) {
       workId: id,
       checkpointId: readback.checkpointId,
       record: readback,
+      tracking: projectWorkTracking(readback),
       readbackVerified: true,
       ownerExecutionVerified: false,
       workTruthChanged: false,
